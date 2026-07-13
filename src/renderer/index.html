@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: http: https:; media-src 'self' http: https:; connect-src 'self' ws: wss: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <title>Helios · Driver Companion</title>
+    <link rel="stylesheet" href="dockview.css" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- ================= TOP BAR (fixed chrome) ================= -->
+      <header id="topbar">
+        <div class="brand">
+          <span class="brand-mark">◑</span>
+          <span class="brand-name">HELIOS</span>
+          <span class="brand-team">9704</span>
+        </div>
+
+        <div id="nt-status" class="offline" title="NetworkTables link">
+          <span class="pip"></span>
+          <span class="nt-label">NT4</span>
+          <span class="rtt">OFFLINE</span>
+        </div>
+
+        <!-- Station picker moved into the Field panel (field.ts overlay). -->
+
+        <div class="topbar-actions">
+          <div class="panels-wrap">
+            <button id="btn-panels" class="tbtn">+ Panels</button>
+            <div id="panels-menu"></div>
+          </div>
+          <button id="btn-dock" class="tbtn">Dock DS</button>
+          <button id="btn-launch-ds" class="tbtn tbtn-accent">Launch DS</button>
+          <button id="btn-settings" class="tbtn tbtn-icon" title="Settings" aria-label="Settings">⚙</button>
+        </div>
+      </header>
+
+      <!-- ================= DOCKVIEW (all panels live here) ================= -->
+      <main id="dock-root"></main>
+
+      <!-- ================= DOCK STRIP (fixed chrome — the native DS floats here) ================= -->
+      <footer id="dock-strip">
+        <span class="dock-hint">Drop the Driver Station here</span>
+      </footer>
+    </div>
+
+    <!-- ================= SETTINGS MODAL ================= -->
+    <div id="settings-modal">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>Connection Settings</h3>
+        </div>
+        <label class="field">
+          <span>NetworkTables host</span>
+          <input id="set-nt-host" type="text" spellcheck="false" placeholder="10.97.4.2" />
+        </label>
+        <label class="field field-row">
+          <span>Simulation mode</span>
+          <input id="set-sim-mode" type="checkbox" />
+          <small>overrides host with 127.0.0.1</small>
+        </label>
+        <label class="field">
+          <span>Limelight host</span>
+          <input id="set-limelight-host" type="text" spellcheck="false" placeholder="10.97.4.11" />
+        </label>
+        <div class="modal-actions">
+          <button id="set-reset-layout" class="tbtn modal-left">Reset layout</button>
+          <button id="set-cancel" class="tbtn">Cancel</button>
+          <button id="set-save" class="tbtn tbtn-accent">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

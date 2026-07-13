@@ -1,0 +1,23 @@
+{
+  "name": "helios-driver-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Helios Driver Companion — single-window driver dashboard for FRC Team 9704.",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "electron": "^43.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.3",
+    "dockview-core": "^7.0.2",
+    "koffi": "^3.1.1",
+    "uplot": "^1.6.32"
+  }
+}

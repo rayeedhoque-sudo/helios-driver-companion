@@ -1,0 +1,8 @@
+# dependencies + build output (regenerate with: npm install && npm run build)
+node_modules/
+dist/
+
+# runtime captures / logs
+logs/
+*.log
+cap*.json
