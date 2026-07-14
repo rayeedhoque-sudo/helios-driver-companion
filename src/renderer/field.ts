@@ -202,9 +202,11 @@ function displayDeg(): number | null {
 
 // Radar placement (pure, exported for the geometry self-check): driver-frame bearing
 // (deg, 0 = FORWARD/up, + toward the driver's LEFT) + distance -> canvas offset from
-// the ring center. Soft range scale keeps any distance inside R (3 m lands mid-ring).
+// the ring center. Soft range scale keeps any distance inside R (1 m lands mid-ring —
+// tight scale so even a robot 1 m away shows a clear gap from the YOU marker; the
+// robot glyph alone is ~0.38 R wide, so the old 3 m half-distance hid short ranges).
 export function radarOffset(brgDeg: number, distM: number, R: number): { dx: number; dy: number } {
-  const r = R * (distM / (distM + 3));
+  const r = R * (distM / (distM + 1));
   const a = (brgDeg * Math.PI) / 180;
   return { dx: -Math.sin(a) * r, dy: -Math.cos(a) * r };
 }

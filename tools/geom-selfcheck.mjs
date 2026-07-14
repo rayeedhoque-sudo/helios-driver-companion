@@ -57,9 +57,9 @@ const { computeLayout, fieldToCanvasAt, radarOffset } = mod;
       process.exit(1);
     }
   };
-  const fwd = radarOffset(0, 3, R); // 3 m = mid-ring by the soft scale
-  const left = radarOffset(90, 3, R);
-  const behind = radarOffset(180, 3, R);
+  const fwd = radarOffset(0, 1, R); // 1 m = mid-ring by the soft scale
+  const left = radarOffset(90, 1, R);
+  const behind = radarOffset(180, 1, R);
   const far = radarOffset(0, 1e6, R);
   must(near(fwd.dx, 0) && near(fwd.dy, -50), 'forward should be up at mid-ring', fwd);
   must(near(left.dx, -50) && near(left.dy, 0), '+90 should be left', left);

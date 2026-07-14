@@ -538,7 +538,8 @@ function renderChooserStatus(): void {
 // ===================== CONTROLS REFERENCE =====================
 // Static driver reference of the Xbox bindings in RobotContainer.configureBindings().
 // KEEP IN SYNC with RobotContainer.java — bindings are not published over NT, so this
-// mirrors the code by hand (last synced 2026-07-12: slider + hopper + shooter disabled).
+// mirrors the code by hand (last synced 2026-07-12: hopper direction test on D-pad;
+// slider + hopper + shooter disabled).
 type CtlRow = { btn: string; desc: string; off?: string };
 const CONTROLS: { group: string; rows: CtlRow[] }[] = [
   {
@@ -560,13 +561,21 @@ const CONTROLS: { group: string; rows: CtlRow[] }[] = [
     ],
   },
   {
+    group: 'Hopper direction test — slow 5% duty, hold to run',
+    rows: [
+      { btn: 'DPAD ←', desc: 'Hold: hopper motor A only (CAN 20, front) — note belt direction' },
+      { btn: 'DPAD →', desc: 'Hold: hopper motor B only (CAN 21, back) — note belt direction' },
+      { btn: 'DPAD ↓', desc: 'Hold: BOTH belts — run after A/B checks to confirm they agree' },
+    ],
+  },
+  {
     group: 'Disabled bindings',
     rows: [
       { btn: 'B', desc: 'Hopper run', off: 'hopper disabled' },
       { btn: 'VIEW', desc: 'Hopper unjam', off: 'hopper disabled' },
       { btn: 'RB', desc: 'Manual shot — max hood + high speed', off: 'shooter disabled' },
       { btn: 'RT', desc: 'Auto shot — ballistics model', off: 'shooter disabled' },
-      { btn: 'DPAD ←↓→', desc: 'Drive to feed positions', off: 'not wired — needs field poses' },
+      { btn: 'DPAD ←↓→', desc: 'Drive to feed positions', off: 'not wired — D-pad is the hopper test for now' },
     ],
   },
 ];
