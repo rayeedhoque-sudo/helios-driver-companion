@@ -609,8 +609,8 @@ const CONTROLS: { group: string; rows: CtlRow[]; testOnly?: boolean }[] = [
     testOnly: true,
     rows: [
       { btn: 'Y', desc: 'Hold: manual test-fire — fixed hood + speed (same as match RB), belts + kicker at-speed-gated — actually launches a ball' },
-      { btn: 'DPAD ←', desc: 'Press: hood to MIN, flywheels off' },
-      { btn: 'DPAD →', desc: 'Press: hood to MAX, flywheels off' },
+      { btn: 'DPAD ←', desc: 'Hold: jog hood DOWN toward MIN, 5°/sec, flywheels off — release freezes position' },
+      { btn: 'DPAD →', desc: 'Hold: jog hood UP toward MAX, 5°/sec, flywheels off — release freezes position' },
     ],
   },
   {
