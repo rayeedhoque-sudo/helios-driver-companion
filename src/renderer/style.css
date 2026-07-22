@@ -1,23 +1,23 @@
 /* ============================================================================
    Helios Driver Companion — instrument-cluster dark theme.
-   Identity: solar-amber accents on deep graphite, Bahnschrift condensed labels,
+   Identity: violet accents on purple-black, Bahnschrift condensed labels,
    monospace telemetry readouts. Glanceable from 2 m while driving.
    ========================================================================== */
 
 :root {
-  --bg: #090d14;
-  --surface: #101825;
-  --surface-2: #0b111b;
-  --surface-3: #16202f;
-  --line: #223449;
-  --line-soft: #16202e;
+  --bg: #0b0812;
+  --surface: #17111f;
+  --surface-2: #100b17;
+  --surface-3: #1f1729;
+  --line: #38294c;
+  --line-soft: #1d1528;
 
-  --text: #eaf0f8;
-  --text-dim: #8b9bb0;
-  --text-faint: #566577;
+  --text: #f2eef8;
+  --text-dim: #a99cbe;
+  --text-faint: #6c6182;
 
-  --accent: #ffb020; /* Helios solar amber */
-  --accent-soft: rgba(255, 176, 32, 0.14);
+  --accent: #b57bff; /* Helios violet */
+  --accent-soft: rgba(181, 123, 255, 0.14);
   --good: #35d07f;
   --warn: #ffc94d;
   --bad: #ff4d5e;
@@ -74,7 +74,7 @@ button {
   display: grid;
   grid-template-rows: var(--topbar-h) 1fr auto;
   background:
-    radial-gradient(1200px 600px at 70% -10%, rgba(255, 176, 32, 0.05), transparent 60%),
+    radial-gradient(1200px 600px at 70% -10%, rgba(181, 123, 255, 0.05), transparent 60%),
     var(--bg);
 }
 
@@ -84,7 +84,7 @@ button {
   align-items: center;
   gap: 18px;
   padding: 0 14px;
-  background: linear-gradient(180deg, #0f1622, #0a0f18);
+  background: linear-gradient(180deg, #151020, #0c0913);
   border-bottom: 1px solid var(--line);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
 }
@@ -220,14 +220,14 @@ button {
   background: var(--surface-3);
 }
 .tbtn-accent {
-  color: #1a1206;
+  color: #17102a;
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
 }
 .tbtn-accent:hover {
-  background: #ffc24a;
-  color: #1a1206;
+  background: #c99cff;
+  color: #17102a;
 }
 .tbtn-icon {
   font-size: 15px;
@@ -245,11 +245,11 @@ button {
 }
 .dockview-theme-dark {
   --dv-group-view-background-color: var(--surface-2);
-  --dv-tabs-and-actions-container-background-color: #0a0f18;
+  --dv-tabs-and-actions-container-background-color: #0c0913;
   --dv-activegroup-visiblepanel-tab-background-color: var(--surface-2);
-  --dv-activegroup-hiddenpanel-tab-background-color: #0d1420;
+  --dv-activegroup-hiddenpanel-tab-background-color: #120d1c;
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface-2);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: #0d1420;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #120d1c;
   --dv-tab-divider-color: var(--line-soft);
   --dv-activegroup-visiblepanel-tab-color: var(--text);
   --dv-activegroup-hiddenpanel-tab-color: var(--text-dim);
@@ -257,8 +257,8 @@ button {
   --dv-inactivegroup-hiddenpanel-tab-color: var(--text-faint);
   --dv-separator-border: var(--line-soft);
   --dv-paneview-active-outline-color: var(--accent);
-  --dv-drag-over-background-color: rgba(255, 176, 32, 0.14);
-  --dv-icon-hover-background-color: rgba(255, 176, 32, 0.18);
+  --dv-drag-over-background-color: rgba(181, 123, 255, 0.14);
+  --dv-icon-hover-background-color: rgba(181, 123, 255, 0.18);
   --dv-tabs-and-actions-container-height: 30px;
   --dv-tabs-and-actions-container-font-size: 11px;
   --dv-tab-group-color-yellow: var(--accent);
@@ -361,7 +361,7 @@ button {
   border-color: var(--accent);
 }
 .pane-toggle.active {
-  color: #1a1206;
+  color: #17102a;
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
@@ -396,7 +396,7 @@ button {
 
 /* ---- limelight pane ------------------------------------------------------ */
 .limelight-body {
-  background: #05080d;
+  background: #070510;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -420,12 +420,12 @@ button {
   top: 8px;
   right: 8px;
   z-index: 2;
-  background: rgba(9, 13, 20, 0.72);
+  background: rgba(11, 8, 18, 0.72);
 }
 
 /* ---- field pane ---------------------------------------------------------- */
 .field-body {
-  background: #0b1119;
+  background: #0c0914;
 }
 #field-canvas {
   position: absolute;
@@ -439,7 +439,7 @@ button {
   top: 8px;
   right: 8px;
   z-index: 2;
-  background: rgba(9, 13, 20, 0.72);
+  background: rgba(11, 8, 18, 0.72);
 }
 
 /* ---- dock strip ---------------------------------------------------------- */
@@ -455,8 +455,8 @@ button {
       -45deg,
       transparent,
       transparent 10px,
-      rgba(255, 176, 32, 0.04) 10px,
-      rgba(255, 176, 32, 0.04) 20px
+      rgba(181, 123, 255, 0.04) 10px,
+      rgba(181, 123, 255, 0.04) 20px
     ),
     var(--surface-2);
   transition: height 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
@@ -470,14 +470,14 @@ button {
 }
 #dock-strip.highlight {
   height: 64px;
-  box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 40px rgba(255, 176, 32, 0.12);
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 40px rgba(181, 123, 255, 0.12);
 }
 #dock-strip.highlight .dock-hint {
   color: var(--accent);
 }
 #dock-strip.docked {
   height: var(--ds-height);
-  background: #05080d;
+  background: #070510;
 }
 #dock-strip.docked .dock-hint {
   display: none;
@@ -491,7 +491,7 @@ button {
   display: none;
   align-items: center;
   justify-content: center;
-  background: rgba(3, 6, 10, 0.72);
+  background: rgba(6, 4, 12, 0.72);
   backdrop-filter: blur(2px);
 }
 #settings-modal.open {
@@ -591,7 +591,7 @@ button {
   font-size: 9px;
   letter-spacing: 0.5px;
   color: #ff9052;
-  background: rgba(9, 13, 20, 0.72);
+  background: rgba(11, 8, 18, 0.72);
   border: 1px solid rgba(255, 144, 82, 0.5);
   border-radius: 3px;
   padding: 1px 5px;
@@ -687,7 +687,7 @@ button {
 }
 .pb-row.sel {
   background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px rgba(255, 176, 32, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(181, 123, 255, 0.4);
 }
 .pb-name {
   font-family: var(--font-mono);
@@ -797,7 +797,8 @@ button {
   color: var(--accent);
   margin: 8px 0 3px;
 }
-.mech-head:first-child {
+.mech-head:first-child,
+.ctl-group:first-child .mech-head {
   margin-top: 0;
 }
 
@@ -1007,7 +1008,7 @@ button {
 #station-picker.locked {
   cursor: default;
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px rgba(255, 176, 32, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(181, 123, 255, 0.25);
 }
 #station-picker.locked .stn {
   cursor: default;
@@ -1061,11 +1062,11 @@ button {
   gap: 5px;
 }
 .field-station-overlay #station-picker {
-  background: rgba(11, 17, 25, 0.82);
+  background: rgba(14, 10, 20, 0.82);
   backdrop-filter: blur(2px);
 }
 .field-station-overlay .stn-lock-note {
-  background: rgba(9, 13, 20, 0.78);
+  background: rgba(11, 8, 18, 0.78);
   border: 1px solid var(--line-soft);
   border-radius: 4px;
   padding: 2px 8px;
@@ -1075,9 +1076,9 @@ button {
 /* An aircraft-style heading indicator — NO field graphic. The canvas carries the fixed
    cardinal ring + the live-rotating robot glyph + the laptop (YOU); DOM carries the crisp
    heading readout (top-left), the calibration controls (top-right), and the assumption
-   caption (bottom). Palette reuses the app's system: amber robot, hairline-cyan ring. */
+   caption (bottom). Palette reuses the app's system: violet robot, hairline-lavender ring. */
 .orient-body {
-  background: #0b1119;
+  background: #0c0914;
 }
 .orient-canvas {
   position: absolute;
@@ -1094,7 +1095,7 @@ button {
   display: flex;
   align-items: baseline;
   gap: 4px;
-  background: rgba(9, 13, 20, 0.72);
+  background: rgba(11, 8, 18, 0.72);
   border: 1px solid var(--line-soft);
   border-radius: 4px;
   padding: 3px 8px;
@@ -1129,7 +1130,7 @@ button {
   padding: 3px 7px;
   border: 1px solid var(--line-soft);
   border-radius: 4px;
-  background: rgba(9, 13, 20, 0.72);
+  background: rgba(11, 8, 18, 0.72);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 .orient-btn:hover {

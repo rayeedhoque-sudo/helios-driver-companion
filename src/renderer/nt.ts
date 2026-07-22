@@ -178,12 +178,17 @@ export function decodeSwerveModuleStates(
 
 export const TOPICS = {
   pose: '/Pose/robotPose', // double[3] {x m, y m, deg}, blue-origin
+  visionTagCount: '/Pose/visionTagCount', // double: AprilTags currently correcting the pose (0 = odometry only)
+  matchTime: '/Match/time', // double: sec remaining in current period (auto 20->0, teleop 140->0; -1 = no match clock)
+  matchPeriod: '/Match/period', // string: AUTO | TRANSITION | SHIFT 1..4 | END GAME | TELEOP | DISABLED
+  activeHub: '/Match/activeHub', // string: RED | BLUE | BOTH | UNKNOWN
+  secToSwap: '/Match/secToSwap', // double: sec until the next HUB swap (-1 = none upcoming)
   moduleStates: '/DriveState/ModuleStates', // struct:SwerveModuleState[] raw
   moduleTargets: '/DriveState/ModuleTargets', // struct:SwerveModuleState[] raw (CTRE commanded states)
   isRedAlliance: '/FMSInfo/IsRedAlliance',
   stationNumber: '/FMSInfo/StationNumber',
   fmsControl: '/FMSInfo/FMSControlData', // int control word: 0x10 = FMS attached, 0x20 = DS attached
   autoChooser: '/SmartDashboard/Auto Chooser', // subkeys /options /default /active /selected
-  telemetry: '/CompanionTelemetry', // subkeys /names /stator /supply /temp /voltage
+  telemetry: '/CompanionTelemetry', // subkeys /names /stator /supply /temp /volts /voltage
   limelight: '/limelight-knight', // subkeys /tv /tl /cl /hb /botpose
 } as const;

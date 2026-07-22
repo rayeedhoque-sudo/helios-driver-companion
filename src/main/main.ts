@@ -99,7 +99,7 @@ function createWindow(): void {
     height: 1080,
     minWidth: 1600,
     minHeight: 900,
-    backgroundColor: '#0a0e15',
+    backgroundColor: '#0b0812',
     show: false,
     // build.mjs copies assets/ into dist/assets/ alongside this file (dist/main.cjs),
     // so __dirname-relative resolves the same in dev and packaged layouts.

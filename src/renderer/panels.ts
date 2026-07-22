@@ -27,12 +27,13 @@ const SCALE: number[] = [
   20, 20, // hopper A, B (Spark)
 ];
 // Fallback labels until /names arrives; also fixes display grouping.
-const SPEC_NAMES = [
+// Exported for the motor recorder's subsystem/motor picker (recorder.ts).
+export const SPEC_NAMES = [
   'DriveFL', 'SteerFL', 'DriveFR', 'SteerFR', 'DriveBL', 'SteerBL', 'DriveBR', 'SteerBR',
   'ShooterA', 'ShooterB', 'ShooterC', 'ShooterD', 'Hood', 'IntakeRoller', 'IntakeSlider',
   'HopperA', 'HopperB',
 ];
-const GROUPS: { name: string; idx: number[] }[] = [
+export const GROUPS: { name: string; idx: number[] }[] = [
   { name: 'Drive', idx: [0, 2, 4, 6] },
   { name: 'Steer', idx: [1, 3, 5, 7] },
   { name: 'Shooter', idx: [8, 9, 10, 11] },
@@ -538,63 +539,133 @@ function renderChooserStatus(): void {
 // ===================== CONTROLS REFERENCE =====================
 // Static driver reference of the Xbox bindings in RobotContainer.configureBindings().
 // KEEP IN SYNC with RobotContainer.java — bindings are not published over NT, so this
-// mirrors the code by hand (last synced 2026-07-12: hopper direction test on D-pad;
-// slider + hopper + shooter disabled).
+// mirrors the code by hand (last synced 2026-07-16: full team-spec rebind — shooter
+// RE-ENABLED, sticks swapped, MENU re-zero / DPAD hood jog / RT test shot removed).
+// MENU desc re-synced 2026-07-21: AprilTag auto-seed now stops at first enable, so
+// MENU is the only in-match re-zero.
+// TEST MODE bindings added 2026-07-21 (RobotContainer.configureTestBindings): the SAME
+// physical controller carries a second, mode-gated binding set active ONLY in Driver
+// Station Test mode (RobotModeTriggers.test() — mutually exclusive with the match set's
+// RobotModeTriggers.teleop() gate, so the two never collide). Groups marked testOnly
+// below are hidden here unless the live /FMSInfo/FMSControlData feed reports Test mode,
+// so this panel never shows bindings that aren't actually live for the current DS mode.
 type CtlRow = { btn: string; desc: string; off?: string };
-const CONTROLS: { group: string; rows: CtlRow[] }[] = [
+const CONTROLS: { group: string; rows: CtlRow[]; testOnly?: boolean }[] = [
   {
-    group: 'Driving',
+    group: 'Drive — field-centric (forward = shooter side)',
     rows: [
-      { btn: 'L STICK', desc: 'Drive, field-centric (squared response, slew-limited)' },
-      { btn: 'R STICK ↔', desc: 'Rotate (CCW positive)' },
-      { btn: 'LB', desc: 'X-lock wheels — toggle: press to lock, press to release' },
-      { btn: 'MENU', desc: 'Re-zero field heading (point robot downfield, press once)' },
-      { btn: 'A / DPAD ↑', desc: 'Hold: auto-rotate to face the hub tag (vision)' },
+      { btn: 'R STICK', desc: 'Translate (forward = stick forward on this controller; TODO verify)' },
+      { btn: 'L STICK X', desc: 'Rotate' },
+      { btn: 'LB', desc: 'X-lock wheels (toggle)' },
+      { btn: 'MENU', desc: 'Re-zero field heading — the ONLY in-match re-zero (AprilTags seed the pose only before first enable / at boot)' },
+      { btn: 'DPAD ← / →', desc: 'Rotate exactly +90° (CCW) / −90° — heading snapshot at press' },
+      { btn: 'A / DPAD ↑', desc: 'Hold: search-align — rotate slowly until OUR scoring tag is seen, then face it (re-aims every loop)' },
     ],
   },
   {
-    group: 'Intake — rollers only (slider disabled 2026-07-12)',
+    group: 'Intake — slider + rollers (hold-to-run; slider stows on release)',
     rows: [
-      { btn: 'LT', desc: 'Intake: rollers in — runs until X' },
-      { btn: 'Y', desc: 'Outtake: rollers out — runs until X' },
-      { btn: 'X', desc: 'Stop rollers (stow)' },
+      { btn: 'LT', desc: 'Hold: intake — slider out to stall, THEN rollers in + belts (kicker stays OFF; feed only while rolling, never while sliding); release = rollers/belts stop, then slider retracts to stall' },
+      { btn: 'Y', desc: 'Hold: outtake — same choreography, rollers out' },
+      { btn: 'X', desc: 'Manual stow: rollers stop immediately, then retract to stall' },
     ],
   },
   {
-    group: 'Hopper direction test — slow 5% duty, hold to run',
+    group: 'Shooter — vision shots (release = wheels coast + hood down)',
     rows: [
-      { btn: 'DPAD ←', desc: 'Hold: hopper motor A only (CAN 20, front) — note belt direction' },
-      { btn: 'DPAD →', desc: 'Hold: hopper motor B only (CAN 21, back) — note belt direction' },
-      { btn: 'DPAD ↓', desc: 'Hold: BOTH belts — run after A/B checks to confirm they agree' },
+      { btn: 'RT', desc: 'Hold: precision shot — SCORE tag = ballistic hub shot; FEED tag = calculated lob to our side; no/other tag = NOTHING runs. AUTO-AIMS in place (no strafe), then freezes drive + feeds; belts always, kicker only once flywheels are at speed' },
+      { btn: 'RB', desc: 'Hold: fixed feed — 25° hood + fixed tunable speed; belts always, kicker only once flywheels are at speed' },
     ],
   },
   {
-    group: 'Disabled bindings',
+    group: 'Hopper',
     rows: [
-      { btn: 'B', desc: 'Hopper run', off: 'hopper disabled' },
-      { btn: 'VIEW', desc: 'Hopper unjam', off: 'hopper disabled' },
-      { btn: 'RB', desc: 'Manual shot — max hood + high speed', off: 'shooter disabled' },
-      { btn: 'RT', desc: 'Auto shot — ballistics model', off: 'shooter disabled' },
-      { btn: 'DPAD ←↓→', desc: 'Drive to feed positions', off: 'not wired — D-pad is the hopper test for now' },
+      { btn: 'B', desc: 'Hold: MANUAL hopper — belts + kicker, ungated; release = stop' },
+      { btn: 'VIEW', desc: 'Hold: UNJAM — reverse belts + kicker at low duty; release = stop' },
+    ],
+  },
+  {
+    group: 'TEST MODE ONLY — Intake (per-mechanism bench checkout)',
+    testOnly: true,
+    rows: [
+      { btn: 'LT', desc: 'Hold: rollers IN, isolated (no slider, no hopper)' },
+      { btn: 'RT', desc: 'Hold: rollers OUT, isolated' },
+      { btn: 'DPAD ↑', desc: 'Press: slider/jackshaft extend (CAN 22 — this motor IS the jackshaft)' },
+      { btn: 'DPAD ↓', desc: 'Press: slider/jackshaft retract' },
+    ],
+  },
+  {
+    group: 'TEST MODE ONLY — Hopper',
+    testOnly: true,
+    rows: [
+      { btn: 'LB', desc: 'Hold: belt A alone (isolation diagnostic)' },
+      { btn: 'RB', desc: 'Hold: belt B alone (isolation diagnostic)' },
+      { btn: 'X', desc: 'Hold: both belt motors together, no kicker' },
+      { btn: 'B', desc: 'Hold: kicker alone' },
+    ],
+  },
+  {
+    group: 'TEST MODE ONLY — Shooter (manual/fixed setpoints, no vision)',
+    testOnly: true,
+    rows: [
+      { btn: 'Y', desc: 'Hold: manual test-fire — fixed hood + speed (same as match RB), belts + kicker at-speed-gated — actually launches a ball' },
+      { btn: 'DPAD ←', desc: 'Press: hood to MIN, flywheels off' },
+      { btn: 'DPAD →', desc: 'Press: hood to MAX, flywheels off' },
+    ],
+  },
+  {
+    group: 'Removed 2026-07-16 (team spec: no bindings beyond the above)',
+    rows: [
+      { btn: 'MENU', desc: 'Re-zero field heading', off: 'removed' },
+      { btn: 'DPAD ↑ / ↓', desc: 'Hood jog', off: 'removed (↑ is now search-align)' },
+      { btn: 'RT', desc: 'Test shot', off: 'replaced by precision shot' },
     ],
   },
 ];
 
-// Static DOM only — no NT subs, no timers; trivially safe to re-mount.
+// Live NT gate for the testOnly groups above: robot's actual current DS mode, decoded
+// from the SAME /FMSInfo/FMSControlData word panels.ts already reads for robotEnabled
+// (bit 0x01) — bit 0x04 = Test (edu.wpi.first.hal.ControlWord's field order: enabled,
+// autonomous, test, eStop, fmsAttached, dsAttached -> 0x01/0x02/0x04/0x08/0x10/0x20;
+// 0x10/0x20 already proven correct by the existing FMS/DS-attached reads in this file).
+let robotInTestMode = false;
+let testGroupEls: HTMLElement[] = [];
+
+function applyTestGroupVisibility(): void {
+  for (const el of testGroupEls) el.style.display = robotInTestMode ? '' : 'none';
+}
+
+let controlsSubscribed = false;
+function ensureControlsSubs(): void {
+  if (controlsSubscribed) return;
+  controlsSubscribed = true;
+  onValue(TOPICS.fmsControl, (v) => {
+    robotInTestMode = (Number(v) & 0x04) !== 0;
+    applyTestGroupVisibility();
+  });
+}
+
+// No timers; the only NT sub is the shared fmsControl feed (subscribed once, ever).
 export function mountControls(host: HTMLElement): void {
   host.textContent = '';
   host.classList.add('ctl', 'dc-scroll');
+  testGroupEls = [];
   for (const g of CONTROLS) {
-    host.appendChild(h('div', 'mech-head', g.group));
+    const group = h('div', 'ctl-group');
+    group.appendChild(h('div', 'mech-head', g.group));
     for (const r of g.rows) {
       const row = h('div', 'ctl-row');
       if (r.off) row.classList.add('ctl-off');
       row.appendChild(h('span', 'ctl-btn', r.btn));
       row.appendChild(h('span', 'ctl-desc', r.desc));
       if (r.off) row.appendChild(h('span', 'ctl-tag', r.off));
-      host.appendChild(row);
+      group.appendChild(row);
     }
+    host.appendChild(group);
+    if (g.testOnly) testGroupEls.push(group);
   }
+  ensureControlsSubs();
+  applyTestGroupVisibility(); // apply cached state immediately (e.g. panel reopened mid-Test)
 }
 
 // ---- key/value row builders -----------------------------------------------

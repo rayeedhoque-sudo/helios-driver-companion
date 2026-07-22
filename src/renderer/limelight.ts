@@ -296,7 +296,7 @@ function render(): void {
 
   if (!streamOk) {
     const msg = cycling ? 'NO CAMERA — retrying…' : 'NO CAMERA — press Refresh to retry';
-    paint(msg, 'rgba(5,8,13,0.88)', '#ff4d5e');
+    paint(msg, 'rgba(8,5,14,0.88)', '#ff4d5e');
     setStat('NO SIGNAL');
     refreshBtn?.classList.toggle('active', !cycling);
     return;
@@ -305,7 +305,7 @@ function render(): void {
 
   const stale = ntConnected && Date.now() - lastHbChangeMs > STALE_MS;
   if (stale) {
-    paint('STALE', 'rgba(255,176,32,0.16)', '#ffc94d');
+    paint('STALE', 'rgba(181,123,255,0.16)', '#ffc94d');
     setStat('STALE');
     return;
   }

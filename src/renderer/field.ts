@@ -88,6 +88,23 @@ const trail: Pose[] = [];
 let modules: { speedMps: number; angleRad: number }[] = [];
 let moduleTargets: { speedMps: number; angleRad: number }[] = [];
 let pickedStation: Station = 'B1';
+// AprilTag pose-correction status (robot publishes /Pose/visionTagCount every loop while
+// vision is enabled; 0 = odometry only). Freshness-gated so a robot reboot or vision
+// code path dying reads as ODOM ONLY instead of freezing the last count.
+let visionTags = 0;
+let visionSeenMs = 0;
+// Match clock / HUB-shift state (robot publishes /Match/* every loop; see MatchStatus.java).
+// Freshness-gated like the vision badge so stale data never draws a wrong active hub.
+let matchTime = -1;
+let matchPeriod = '';
+let activeHub = '';
+let secToSwap = -1;
+let matchSeenMs = 0;
+// HUB centers, blue-origin meters — face-midpoint values from FieldConstants.java
+// (derived from the WPILib 2026-rebuilt-welded.json tag layout).
+const HUB_BLUE = { x: 4.6255, y: 4.0346 };
+const HUB_RED = { x: 11.9155, y: 4.0346 };
+const HUB_GLOW_RADIUS_M = 0.9; // hub footprint is 47 in square (~0.6 m half-width) + margin
 
 // ---- steer-desync watch (ModuleTargets vs ModuleStates) -----------------------
 // A sustained gap between where a module is COMMANDED to point and where it actually
@@ -416,6 +433,28 @@ function ensureFieldSubs(): void {
     if (trail.length > TRAIL_MAX) trail.shift();
     markDirty();
   });
+  onValue(TOPICS.visionTagCount, (v) => {
+    visionTags = Number(v) || 0;
+    visionSeenMs = Date.now();
+    markDirty();
+  });
+  onValue(TOPICS.matchTime, (v) => {
+    matchTime = Number(v);
+    matchSeenMs = Date.now();
+    markDirty();
+  });
+  onValue(TOPICS.matchPeriod, (v) => {
+    matchPeriod = String(v);
+    markDirty();
+  });
+  onValue(TOPICS.activeHub, (v) => {
+    activeHub = String(v);
+    markDirty();
+  });
+  onValue(TOPICS.secToSwap, (v) => {
+    secToSwap = Number(v);
+    markDirty();
+  });
   onValue(TOPICS.moduleStates, (v) => {
     const u = toU8(v);
     if (u) {
@@ -547,7 +586,7 @@ function draw(): void {
   if (!ctx) return;
   const { cssW, cssH, s } = layout;
   ctx.clearRect(0, 0, cssW, cssH);
-  ctx.fillStyle = '#0b1119';
+  ctx.fillStyle = '#0c0914';
   ctx.fillRect(0, 0, cssW, cssH);
 
   drawFieldImage();
@@ -557,7 +596,7 @@ function draw(): void {
   const c1 = fieldToCanvasAt(layout, FIELD_W_M, 0);
   const c2 = fieldToCanvasAt(layout, FIELD_W_M, FIELD_H_M);
   const c3 = fieldToCanvasAt(layout, 0, FIELD_H_M);
-  ctx.strokeStyle = 'rgba(255,176,32,0.30)';
+  ctx.strokeStyle = 'rgba(181,123,255,0.30)';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(c0.x, c0.y);
@@ -567,16 +606,19 @@ function draw(): void {
   ctx.closePath();
   ctx.stroke();
 
+  drawHubGlow(); // under everything mobile — it's field surface state
   drawYouMarker();
   drawTrail();
   drawArrows(s);
   drawDesyncBadge();
+  drawVisionBadge();
+  drawMatchTimer();
 
   if (pose) {
     drawRobot(pose.x, pose.y, (pose.headingDeg * Math.PI) / 180);
   } else {
     const mid = fieldToCanvasAt(layout, FIELD_W_M / 2, FIELD_H_M / 2);
-    ctx.fillStyle = 'rgba(139,155,176,0.5)';
+    ctx.fillStyle = 'rgba(169,156,190,0.5)';
     ctx.font = '11px "Cascadia Mono", monospace';
     ctx.textAlign = 'center';
     ctx.fillText('AWAITING POSE', mid.x, mid.y);
@@ -610,7 +652,7 @@ function drawTrail(): void {
     const a = fieldToCanvasAt(layout, trail[i - 1].x, trail[i - 1].y);
     const b = fieldToCanvasAt(layout, trail[i].x, trail[i].y);
     const alpha = (i / trail.length) * 0.55; // older = fainter
-    ctx.strokeStyle = `rgba(255,176,32,${alpha.toFixed(3)})`;
+    ctx.strokeStyle = `rgba(181,123,255,${alpha.toFixed(3)})`;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -629,10 +671,10 @@ function drawRobot(xM: number, yM: number, headingRad: number): void {
   // Body (symmetric, so the transform's reflection is invisible here).
   ctx.beginPath();
   ctx.roundRect(-px / 2, -px / 2, px, px, px * 0.16);
-  ctx.fillStyle = 'rgba(255,176,32,0.9)';
+  ctx.fillStyle = 'rgba(181,123,255,0.9)';
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = '#0b1119';
+  ctx.strokeStyle = '#0c0914';
   ctx.stroke();
   // Bold heading wedge at the front (+x local).
   ctx.beginPath();
@@ -640,7 +682,7 @@ function drawRobot(xM: number, yM: number, headingRad: number): void {
   ctx.lineTo(px * 0.62, 0);
   ctx.lineTo(px * 0.18, px * 0.3);
   ctx.closePath();
-  ctx.fillStyle = '#1a1206';
+  ctx.fillStyle = '#17102a';
   ctx.fill();
   ctx.restore();
 }
@@ -695,7 +737,7 @@ function drawArrows(s: number): void {
     }
   };
   drawSet(moduleTargets, 'rgba(255,255,255,0.35)', 1.5); // commanded (ghost)
-  drawSet(modules, '#7ad7ff', 2.5); // actual
+  drawSet(modules, '#cbb8ff', 2.5); // actual
 }
 
 // Red banner over the field while any module's actual direction has diverged from
@@ -713,6 +755,130 @@ function drawDesyncBadge(): void {
   ctx.fillRect((cssW - w) / 2, 8, w, 22);
   ctx.fillStyle = '#fff';
   ctx.fillText(text, cssW / 2, 24);
+  ctx.textAlign = 'start';
+}
+
+// True while the robot is reporting a live match clock (fresh /Match/* data within 2 s
+// and a real period). TELEOP/DISABLED = enabled-in-the-shop / idle — no shift schedule.
+function matchLive(): boolean {
+  return Date.now() - matchSeenMs < 2000 && matchPeriod !== '' &&
+    matchPeriod !== 'TELEOP' && matchPeriod !== 'DISABLED';
+}
+
+// Pulsing glow over each ACTIVE hub (2026 REBUILT shift mechanic — see MatchStatus.java
+// for the schedule). BOTH: both hubs glow their alliance color; RED/BLUE: only that hub;
+// UNKNOWN (no FMS game data mid-shift): dim dashed rings on both. Repaints ride the
+// continuous /Match/time packets, which keeps the pulse animating.
+function drawHubGlow(): void {
+  if (!ctx || !matchLive()) return;
+  const pulse = 0.35 + 0.2 * Math.sin(Date.now() / 280);
+  const drawOne = (hub: { x: number; y: number }, color: string, unknown: boolean): void => {
+    if (!ctx) return;
+    const c = fieldToCanvasAt(layout, hub.x, hub.y);
+    const r = HUB_GLOW_RADIUS_M * layout.s;
+    ctx.save();
+    if (unknown) {
+      ctx.setLineDash([6, 6]);
+      ctx.strokeStyle = 'rgba(169,156,190,0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      const grad = ctx.createRadialGradient(c.x, c.y, r * 0.25, c.x, c.y, r);
+      grad.addColorStop(0, color.replace('ALPHA', String(pulse.toFixed(3))));
+      grad.addColorStop(1, color.replace('ALPHA', '0'));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = color.replace('ALPHA', String((pulse + 0.3).toFixed(3)));
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r * 0.8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+  const red = 'rgba(255,65,85,ALPHA)';
+  const blue = 'rgba(61,139,255,ALPHA)';
+  if (activeHub === 'RED' || activeHub === 'BOTH') drawOne(HUB_RED, red, false);
+  if (activeHub === 'BLUE' || activeHub === 'BOTH') drawOne(HUB_BLUE, blue, false);
+  if (activeHub === 'UNKNOWN') {
+    drawOne(HUB_RED, red, true);
+    drawOne(HUB_BLUE, blue, true);
+  }
+}
+
+// Match timer pill, bottom-center: "SHIFT 2 · 1:23", plus "SWAP n" while a HUB swap is
+// <=10 s out — violet, turning red for the final 3 s (in step with the controller rumble).
+function drawMatchTimer(): void {
+  if (!ctx || Date.now() - matchSeenMs >= 2000) return; // no robot /Match data at all
+  if (matchTime < 0) {
+    // Robot connected but no match clock (no FMS, DS not in practice mode): show a dim
+    // placeholder so the timer's home is discoverable instead of silently absent.
+    const text = 'NO MATCH CLOCK — DS practice mode starts one';
+    ctx.font = '700 11px "Bahnschrift", sans-serif';
+    const w = ctx.measureText(text).width + 20;
+    const x = (layout.cssW - w) / 2;
+    const y = layout.cssH - 30;
+    ctx.fillStyle = 'rgba(14,10,20,0.55)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, 20, 10);
+    ctx.fill();
+    ctx.fillStyle = '#a99cbe';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x + w / 2, y + 14);
+    ctx.textAlign = 'start';
+    return;
+  }
+  const total = Math.max(0, Math.ceil(matchTime));
+  const clock = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  const swapSoon = secToSwap > 0 && secToSwap <= 10;
+  const text = swapSoon
+    ? `${matchPeriod} · ${clock} · SWAP ${Math.ceil(secToSwap)}`
+    : `${matchPeriod} · ${clock}`;
+  ctx.font = '700 14px "Bahnschrift", sans-serif';
+  const w = ctx.measureText(text).width + 24;
+  const x = (layout.cssW - w) / 2;
+  const y = layout.cssH - 34;
+  ctx.fillStyle = swapSoon && secToSwap <= 3 ? 'rgba(255,65,85,0.92)'
+    : swapSoon ? 'rgba(181,123,255,0.88)'
+    : 'rgba(14,10,20,0.82)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, 26, 13);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(203,184,255,0.25)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = swapSoon ? '#0c0914' : '#f2eef8';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x + w / 2, y + 18);
+  ctx.textAlign = 'start';
+}
+
+// Small pill, top-right: whether the drawn pose is AprilTag-corrected right now.
+// Green "n TAG(S)" while the robot reports tags correcting the pose (value fresh within
+// 1.5 s); dim "ODOM ONLY" otherwise. Repaints ride the pose telemetry's markDirty, so
+// freshness lapses surface on the next pose packet (or panel event) — good enough:
+// with no packets at all the whole panel is static anyway.
+function drawVisionBadge(): void {
+  if (!ctx) return;
+  const active = visionTags > 0 && Date.now() - visionSeenMs < 1500;
+  const text = active ? `\u{1F4E1} ${visionTags} TAG${visionTags > 1 ? 'S' : ''}` : 'ODOM ONLY';
+  ctx.font = '700 11px "Bahnschrift", sans-serif';
+  const w = ctx.measureText(text).width + 16;
+  const x = layout.cssW - w - 8;
+  // y=36: clears the FULL FIELD / DRIVER VIEW toggle, a DOM overlay pinned at top:8
+  // right:8 (~20 px tall) that would otherwise sit on top of this canvas badge.
+  const y = 36;
+  ctx.fillStyle = active ? 'rgba(46,160,67,0.85)' : 'rgba(169,156,190,0.25)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, 20, 10);
+  ctx.fill();
+  ctx.fillStyle = active ? '#fff' : '#a99cbe';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x + w / 2, y + 14);
   ctx.textAlign = 'start';
 }
 
@@ -860,7 +1026,7 @@ function drawMap(): void {
   const W = mapCssW;
   const H = mapCssH;
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#0b1119';
+  ctx.fillStyle = '#0c0914';
   ctx.fillRect(0, 0, W, H);
 
   // Geometry: cardinal ring centered in the panel; laptop (YOU) fixed at ring center.
@@ -870,15 +1036,15 @@ function drawMap(): void {
 
   // Signature: a faint forward axis from YOU up through the ring to FORWARD — the one line
   // that makes "forward = away from you" visible.
-  ctx.strokeStyle = 'rgba(255,176,32,0.16)';
+  ctx.strokeStyle = 'rgba(181,123,255,0.16)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(cx, cy - 14);
   ctx.lineTo(cx, cy - R - 6);
   ctx.stroke();
 
-  // Cardinal ring (hairline cyan — deliberately NOT a field boundary).
-  ctx.strokeStyle = 'rgba(122,215,255,0.28)';
+  // Cardinal ring (hairline lavender — deliberately NOT a field boundary).
+  ctx.strokeStyle = 'rgba(203,184,255,0.28)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
@@ -889,7 +1055,7 @@ function drawMap(): void {
     const rad = (a - 90) * (Math.PI / 180); // 0° at top
     const card = a % 90 === 0;
     const inner = card ? R - 9 : R - 5;
-    ctx.strokeStyle = card ? 'rgba(122,215,255,0.55)' : 'rgba(122,215,255,0.22)';
+    ctx.strokeStyle = card ? 'rgba(203,184,255,0.55)' : 'rgba(203,184,255,0.22)';
     ctx.lineWidth = card ? 2 : 1;
     ctx.beginPath();
     ctx.moveTo(cx + Math.cos(rad) * inner, cy + Math.sin(rad) * inner);
@@ -899,7 +1065,7 @@ function drawMap(): void {
 
   // Cardinal labels (Bahnschrift condensed, quiet).
   ctx.font = '700 12px "Bahnschrift", sans-serif';
-  ctx.fillStyle = '#8b9bb0';
+  ctx.fillStyle = '#a99cbe';
   ctx.textAlign = 'center';
   ctx.fillText('FORWARD', cx, cy - R - 10);
   ctx.fillText('BACK', cx, cy + R + 20);
@@ -915,7 +1081,7 @@ function drawMap(): void {
   // rotated by its heading — or a placeholder if no pose yet.
   const dd = displayDeg();
   if (dd === null) {
-    ctx.fillStyle = 'rgba(139,155,176,0.6)';
+    ctx.fillStyle = 'rgba(169,156,190,0.6)';
     ctx.font = '11px "Cascadia Mono", monospace';
     ctx.textAlign = 'center';
     ctx.fillText('AWAITING HEADING', cx, cy - R - 26);
@@ -956,10 +1122,10 @@ function drawOrientRobot(
   // Body.
   ctx.beginPath();
   ctx.roundRect(-px / 2, -px / 2, px, px, px * 0.16);
-  ctx.fillStyle = 'rgba(255,176,32,0.95)';
+  ctx.fillStyle = 'rgba(181,123,255,0.95)';
   ctx.fill();
   ctx.lineWidth = 2.5;
-  ctx.strokeStyle = '#0b1119';
+  ctx.strokeStyle = '#0c0914';
   ctx.stroke();
   // Bold FRONT wedge, pointing up (-y local), overhanging the body so it clearly points.
   ctx.beginPath();
@@ -967,12 +1133,12 @@ function drawOrientRobot(
   ctx.lineTo(0, -px * 0.92);
   ctx.lineTo(px * 0.42, -px * 0.08);
   ctx.closePath();
-  ctx.fillStyle = '#1a1206';
+  ctx.fillStyle = '#17102a';
   ctx.fill();
   ctx.restore();
   if (distM >= 0.05) {
     ctx.font = '10px "Cascadia Mono", monospace';
-    ctx.fillStyle = '#8b9bb0';
+    ctx.fillStyle = '#a99cbe';
     ctx.textAlign = 'center';
     ctx.fillText(`${distM.toFixed(1)} m`, cx, cy + px * 0.85 + 11);
     ctx.textAlign = 'start';
@@ -989,14 +1155,14 @@ function drawOrientLaptop(ctx: CanvasRenderingContext2D, cx: number, y: number):
   ctx.save();
   ctx.translate(cx, y + 8); // body spans -20..+4 local; +8 optically centers it on the ring
   ctx.lineWidth = 1.5;
-  ctx.strokeStyle = '#0b1119';
+  ctx.strokeStyle = '#0c0914';
   // Screen (leaning up toward the ring).
   ctx.fillStyle = col;
   ctx.beginPath();
   ctx.roundRect(-w / 2, -h - 6, w, h, 3);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = 'rgba(234,240,248,0.22)';
+  ctx.fillStyle = 'rgba(242,238,248,0.22)';
   ctx.fillRect(-w / 2 + 3, -h - 3, w - 6, h - 6);
   // Keyboard base (trapezoid).
   ctx.fillStyle = col;

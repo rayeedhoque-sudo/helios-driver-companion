@@ -17,6 +17,7 @@ import { mountField, mountLaptopMap } from './field';
 import { mountVoltageGraph, mountCurrentGraph } from './graphs';
 import { mountPowerBars, mountVision, mountMechanisms, mountAutoChooser, mountControls } from './panels';
 import { mountDeploy } from './deploy';
+import { mountMotorRecorder } from './recorder';
 
 export interface PanelDef {
   /** Stable id — dockview panel id + layout key. FROZEN; never rename. */
@@ -39,6 +40,8 @@ export const PANELS: readonly PanelDef[] = [
   { id: 'vision-link', title: 'Vision Link', mount: mountVision },
   { id: 'deploy', title: 'Deploy', mount: mountDeploy },
   { id: 'controls', title: 'Controls', mount: mountControls },
+  { id: 'motor-recorder', title: 'Motor Recorder', mount: mountMotorRecorder }, // starts closed — open via "+ Panels"
+
 ];
 
 export function getPanelDef(id: string): PanelDef | undefined {

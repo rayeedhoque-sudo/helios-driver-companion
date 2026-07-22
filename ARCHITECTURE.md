@@ -33,6 +33,7 @@ FROZEN — see that section). Follow-up agents fill panel **internals only** (th
 | `src/renderer/nt.ts` | done | NT4 client + `TOPICS` |
 | `src/renderer/field.ts` | done | field render + steer-desync watch; `mountLaptopMap` = Orientation radar (implemented) |
 | `src/renderer/graphs.ts` | done | two uPlot panels (voltage / current) |
+| `src/renderer/recorder.ts` | done | motor recorder panel (record + review volts/amps of one motor) |
 | `src/renderer/panels.ts` | done | power, vision-link, mechanisms, auto-chooser panels |
 | `src/renderer/limelight.ts` | done | MJPEG stream + overlay panel |
 | `src/renderer/deploy.ts` | done | deploy panel (button, live log, status) |
@@ -207,7 +208,7 @@ export const TOPICS = {
   isRedAlliance: '/FMSInfo/IsRedAlliance', stationNumber: '/FMSInfo/StationNumber',
   fmsControl: '/FMSInfo/FMSControlData',      // int control word (0x01 enabled, 0x20 DS attached)
   autoChooser: '/SmartDashboard/Auto Chooser',// subkeys /options /default /active /selected
-  telemetry: '/CompanionTelemetry',           // subkeys /names /stator /supply /temp /voltage
+  telemetry: '/CompanionTelemetry',           // subkeys /names /stator /supply /temp /volts /voltage
   limelight: '/limelight-knight',             // subkeys /tv /tl /cl /hb /botpose
 } as const;
 ```
@@ -262,7 +263,28 @@ Rules for follow-up agents:
 - Current ids: `limelight`, `field`, `laptop-map` (Orientation radar),
   `graph-voltage`, `graph-current`, `power`, `mechanisms`, `auto-chooser`,
   `vision-link`, `deploy`, `controls` (static Xbox-bindings reference —
-  KEEP IN SYNC with RobotContainer.configureBindings(); starts closed).
+  KEEP IN SYNC with RobotContainer.configureBindings(); starts closed),
+  `motor-recorder` (starts closed — see below).
+
+## recorder.ts — Motor Recorder panel (`motor-recorder`, starts closed)
+
+Pick one motor (grouped `<select>` mirroring panels.ts `GROUPS`/`SPEC_NAMES`,
+both exported for this), ● Record → a 10 Hz timer (graphs.ts pipeline) appends
+samples of that motor's applied volts (`/volts`, published by
+PowerTelemetry.java; NaN + an on-screen hint if the robot code predates the
+topic) and stator amps from the latest cached NT values, timestamped seconds-
+since-Record on the client clock. Per-arrival sampling would NOT work: NT4 only
+transmits on value change, so an idle robot (or the all-zeros sim) produces no
+arrivals. The tick skips while NT is disconnected — a dead link is a time gap,
+never a stale flat line. ■ Stop moves it into a session-only in-memory list (newest
+first, cap 20; 36 000-sample ≈ 1 h auto-stop). Review: two stacked single-series
+uPlot charts (volts amber over amps blue — the app's series-identity colors, one
+y-axis each, never dual-axis), shared x with synced crosshair (`cursor.sync` key
+`rec-x`) and drag-zoom propagated via a guarded `setScale` hook; double-click
+resets. Recording/list/subs live in MODULE scope behind `ensureRecSubs()` — a
+recording keeps capturing while the tab is closed; mount rebuilds DOM + fresh
+uPlots from that state. Styles are an injected `<style id="rec-styles">`
+(deploy.ts pattern — does not touch style.css).
 
 ## Dockview shell + layout persistence (app.ts)
 

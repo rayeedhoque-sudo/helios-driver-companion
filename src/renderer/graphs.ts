@@ -19,13 +19,14 @@ const N = WINDOW_S * HZ; // 600
 const DT = 1 / HZ;
 
 // Series identity colors — validated for the dark surface (dataviz):
-//   voltage = solar amber (single series, its own chart),
+//   voltage = violet (single series, its own chart),
 //   total current = alliance blue, focus motor = warm orange (CVD ΔE ~104 vs blue).
-const COL_VOLT = '#ffb020';
-const COL_CURR = '#3d8bff';
+// Exported: recorder.ts reuses the same series-identity colors (volts/amps).
+export const COL_VOLT = '#b57bff';
+export const COL_CURR = '#3d8bff';
 const COL_FOCUS = '#ff9052';
-const AXIS_INK = '#8b9bb0'; // --text-dim
-const GRID = 'rgba(34,52,73,0.55)'; // --line, translucent
+const AXIS_INK = '#a99cbe'; // --text-dim
+const GRID = 'rgba(56,41,76,0.55)'; // --line, translucent
 const FONT = '10px "Cascadia Mono", Consolas, monospace';
 
 // Shared rolling timeline (seconds) + one series buffer per trace.
@@ -190,13 +191,13 @@ function voltageOpts(d: { width: number; height: number }): uPlot.Options {
     axes: [xAxisHidden, yAxis((v) => v.toFixed(0))],
     series: [
       {},
-      { stroke: COL_VOLT, width: 1.5, fill: 'rgba(255,176,32,0.10)', points: { show: false } },
+      { stroke: COL_VOLT, width: 1.5, fill: 'rgba(181,123,255,0.10)', points: { show: false } },
     ],
     hooks: {
       draw: [
         (u) => {
           // Subtle reference lines: 12.3 V nominal load, 6.8 V roboRIO brownout.
-          drawGuide(u, 12.3, 'rgba(139,155,176,0.35)');
+          drawGuide(u, 12.3, 'rgba(169,156,190,0.35)');
           drawGuide(u, 6.8, 'rgba(255,77,94,0.45)');
         },
       ],
