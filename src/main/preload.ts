@@ -2,9 +2,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { Settings } from '../renderer/store';
 import type { DsStatus } from './dsdock';
-import type { DeployActionResult, DeployStatus } from './deploy';
+import type { DeployActionResult, DeployStatus, DeployTarget } from './deploy';
 
-export type { DsStatus, Settings, DeployActionResult, DeployStatus };
+export type { DsStatus, Settings, DeployActionResult, DeployStatus, DeployTarget };
 
 export interface CompanionApi {
   getSettings(): Promise<Settings>;
@@ -19,7 +19,7 @@ export interface CompanionApi {
     onHover(cb: (hovering: boolean) => void): void;
   };
   deploy: {
-    start(): Promise<DeployActionResult>;
+    start(target: DeployTarget): Promise<DeployActionResult>;
     cancel(): Promise<DeployActionResult>;
     status(): Promise<DeployStatus>;
     onOutput(cb: (chunk: string) => void): void;
@@ -44,7 +44,7 @@ const api: CompanionApi = {
     },
   },
   deploy: {
-    start: () => ipcRenderer.invoke('deploy:start'),
+    start: (target) => ipcRenderer.invoke('deploy:start', target),
     cancel: () => ipcRenderer.invoke('deploy:cancel'),
     status: () => ipcRenderer.invoke('deploy:status'),
     onOutput: (cb) => {

@@ -5,9 +5,22 @@
 // follow the same split used elsewhere (panels.ts ensure*Subs): the log
 // buffer and run status live in MODULE scope so they survive a panel
 // close/reopen mid-run; mount() just rebuilds the DOM and re-renders them.
-import type { DeployStatus } from '../main/preload';
+import type { DeployStatus, DeployTarget } from '../main/preload';
 
 const MAX_LOG_LINES = 2000;
+
+// V1/V2 project selector. Labels + paths are display-only; the actual deploy
+// path is resolved from the KEY inside main/deploy.ts (PROJECT_DIRS) — the
+// renderer only ever sends the key. V1 (proven) is the default; V2 is the clean
+// re-architecture (behaviorally identical but not yet on-robot-verified).
+const TARGETS: { key: DeployTarget; label: string; path: string }[] = [
+  { key: 'v1', label: 'V1 — Helios-2026 (proven)', path: 'C:\\FRC\\Helios-2026' },
+  { key: 'v2', label: 'V2 — Helios-2026-V2 (re-architected)', path: 'C:\\FRC\\Helios-2026-V2' },
+];
+let selectedTarget: DeployTarget = 'v1';
+function targetPath(key: DeployTarget): string {
+  return TARGETS.find((t) => t.key === key)?.path ?? TARGETS[0].path;
+}
 
 // ---- module-scope state (persists across mount/unmount) --------------------
 const logBuffer: string[] = [];
@@ -21,6 +34,8 @@ let btnEl: HTMLButtonElement | null = null;
 let cancelEl: HTMLButtonElement | null = null;
 let statusEl: HTMLElement | null = null;
 let logEl: HTMLElement | null = null;
+let selectEl: HTMLSelectElement | null = null;
+let captionEl: HTMLElement | null = null;
 
 export function mountDeploy(container: HTMLElement): void {
   injectStyles();
@@ -48,6 +63,12 @@ function injectStyles(): void {
   border:1px solid var(--line,#38294c); border-radius:6px; padding:9px 16px; cursor:pointer; }
 .dpl-cancel:hover { color:var(--text,#f2eef8); border-color:var(--bad,#ff4d5e); }
 .dpl-cancel[hidden] { display:none; }
+.dpl-select { font-family:var(--font-body,"Segoe UI",system-ui,sans-serif); font-size:12px;
+  color:var(--text,#f2eef8); background:var(--surface,#17111f); border:1px solid var(--line,#38294c);
+  border-radius:6px; padding:9px 12px; cursor:pointer; }
+.dpl-select:disabled { opacity:0.45; cursor:not-allowed; }
+.dpl-select-label { font-family:var(--font-mono,"Cascadia Mono",monospace); font-size:11px;
+  color:var(--text-faint,#6c6182); }
 .dpl-caption { font-family:var(--font-mono,"Cascadia Mono",monospace); font-size:11px;
   color:var(--text-faint,#6c6182); }
 .dpl-status { font-family:var(--font-display,"Bahnschrift",sans-serif); font-size:13px; letter-spacing:1px;
@@ -83,13 +104,33 @@ function build(container: HTMLElement): void {
   cancel.addEventListener('click', onCancelClick);
   cancelEl = cancel;
 
+  // V1/V2 project selector.
+  const selLabel = document.createElement('span');
+  selLabel.className = 'dpl-select-label';
+  selLabel.textContent = 'Project:';
+  const select = document.createElement('select');
+  select.className = 'dpl-select';
+  for (const t of TARGETS) {
+    const opt = document.createElement('option');
+    opt.value = t.key;
+    opt.textContent = t.label;
+    select.append(opt);
+  }
+  select.value = selectedTarget;
+  select.addEventListener('change', () => {
+    selectedTarget = (select.value as DeployTarget);
+    updateCaption();
+  });
+  selectEl = select;
+
   const row = document.createElement('div');
   row.className = 'dpl-row';
-  row.append(btn, cancel);
+  row.append(btn, cancel, selLabel, select);
 
   const caption = document.createElement('div');
   caption.className = 'dpl-caption';
-  caption.textContent = 'Deploys C:\\FRC\\Helios-2026 — needs the robot network (tether or robot Wi-Fi)';
+  captionEl = caption;
+  updateCaption();
 
   const st = document.createElement('div');
   st.className = 'dpl-status';
@@ -104,6 +145,12 @@ function build(container: HTMLElement): void {
   renderStatus();
 }
 
+function updateCaption(): void {
+  if (!captionEl) return;
+  captionEl.textContent =
+    `Deploys ${targetPath(selectedTarget)} — needs the robot network (tether or robot Wi-Fi)`;
+}
+
 function onDeployClick(): void {
   if (status.phase === 'running') return; // defensive; button is disabled while running
   if (btnEl) btnEl.disabled = true; // optimistic — avoids a double-click race before the IPC round-trip
@@ -111,10 +158,11 @@ function onDeployClick(): void {
     pushLine(partialLine);
     partialLine = '';
   }
-  pushLine(`--- deploy started ${new Date().toLocaleTimeString()} ---`);
+  const target = selectedTarget; // snapshot at click; the select is disabled for the run
+  pushLine(`--- deploy started ${new Date().toLocaleTimeString()} (${target.toUpperCase()}: ${targetPath(target)}) ---`);
   renderLog();
   window.companion.deploy
-    .start()
+    .start(target)
     .then((res) => {
       if (!res.ok) pushLine(`[deploy] ${res.error}`);
       void refreshStatus();
@@ -196,6 +244,7 @@ function renderStatus(): void {
   const running = status.phase === 'running';
   btnEl.disabled = running;
   cancelEl.hidden = !running;
+  if (selectEl) selectEl.disabled = running; // can't switch project mid-deploy
 
   let text: string;
   let level: string;

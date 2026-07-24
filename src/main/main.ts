@@ -298,7 +298,7 @@ function registerIpc(): void {
     setZoneRect(rectDip),
   );
 
-  ipcMain.handle('deploy:start', () => startDeploy());
+  ipcMain.handle('deploy:start', (_e, target) => startDeploy(target));
   ipcMain.handle('deploy:cancel', () => cancelDeploy());
   ipcMain.handle('deploy:status', () => getDeployStatus());
 }

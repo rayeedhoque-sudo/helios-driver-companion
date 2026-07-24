@@ -4,21 +4,31 @@
 // main.ts (see ARCHITECTURE.md "Deploy (main) + IPC").
 //
 // Spawn is a FIXED argv (`cmd.exe /c gradlew.bat deploy`, cwd = the robot
-// project, shell:false) — there is no user input anywhere near this command,
-// so there is nothing to sanitize; deliberately not templated to keep it that
-// way. Single-flight: only one run at a time (see startDeploy). Cancel/quit
-// kill the whole process TREE via `taskkill /T /F` — gradle spawns a daemon
-// JVM (and that spawns build children) that `cmd.exe /c` does not track as
-// its own child, so a plain child.kill() would leave them running.
+// project, shell:false). The renderer's V1/V2 dropdown sends only a KEY
+// ('v1'|'v2') that is validated against the PROJECT_DIRS map below — the cwd
+// and gradlew path are still built from HARDCODED constants, never from user
+// free-text, so there is still nothing to sanitize in the command. Deliberately
+// not templated to keep it that way. Single-flight: only one run at a time (see
+// startDeploy). Cancel/quit kill the whole process TREE via `taskkill /T /F` —
+// gradle spawns a daemon JVM (and that spawns build children) that `cmd.exe /c`
+// does not track as its own child, so a plain child.kill() would leave them running.
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 
-const PROJECT_DIR = 'C:\\FRC\\Helios-2026';
-// Absolute path, not a bare 'gradlew.bat' — this machine has the Windows
-// hardening env var NoDefaultCurrentDirectoryInExePath=1 set, which disables
-// cmd.exe's implicit search of the current directory for an executable, so a
-// bare filename silently fails to resolve even with the right cwd. Still a
-// fixed, hardcoded constant — nothing user-controllable.
-const GRADLEW = PROJECT_DIR + '\\gradlew.bat';
+// Deploy targets: a FIXED map of allowed project keys -> hardcoded absolute
+// project dirs. V1 is the proven, on-robot-tuned tree; V2 is the clean
+// re-architecture (behaviorally identical, but not yet on-robot-verified) —
+// so V1 is the default and V2 must be chosen deliberately in the dropdown.
+export type DeployTarget = 'v1' | 'v2';
+const PROJECT_DIRS: Record<DeployTarget, string> = {
+  v1: 'C:\\FRC\\Helios-2026',
+  v2: 'C:\\FRC\\Helios-2026-V2',
+};
+export const DEFAULT_TARGET: DeployTarget = 'v1';
+// Resolve a key to its hardcoded path, falling back to the default for any
+// unknown/absent key (so a bad IPC payload can never reach spawn as a path).
+function projectDirFor(target: DeployTarget | undefined): string {
+  return (target && PROJECT_DIRS[target]) || PROJECT_DIRS[DEFAULT_TARGET];
+}
 
 export type DeployPhase = 'idle' | 'running' | 'success' | 'failed' | 'cancelled';
 export type DeployStatus = { phase: DeployPhase; startedAt: number | null; exitCode: number | null };
@@ -42,8 +52,16 @@ export function getStatus(): DeployStatus {
   return { phase, startedAt, exitCode };
 }
 
-export function startDeploy(): DeployActionResult {
+export function startDeploy(target: DeployTarget = DEFAULT_TARGET): DeployActionResult {
   if (phase === 'running') return { ok: false, error: 'a deploy is already running' };
+
+  const projectDir = projectDirFor(target);
+  // Absolute path, not a bare 'gradlew.bat' — this machine has the Windows
+  // hardening env var NoDefaultCurrentDirectoryInExePath=1 set, which disables
+  // cmd.exe's implicit search of the current directory for an executable, so a
+  // bare filename silently fails to resolve even with the right cwd. Built from
+  // the hardcoded PROJECT_DIRS constant, nothing user-controllable.
+  const gradlew = projectDir + '\\gradlew.bat';
 
   phase = 'running';
   startedAt = Date.now();
@@ -54,8 +72,8 @@ export function startDeploy(): DeployActionResult {
   // after `taskkill /T` kills the client — Cancel would not actually cancel, and a
   // half-cancelled deploy could still land on the robot. Costs a few seconds of JVM
   // startup per deploy; correctness of Cancel wins.
-  child = spawn('cmd.exe', ['/c', GRADLEW, 'deploy', '--no-daemon'], {
-    cwd: PROJECT_DIR,
+  child = spawn('cmd.exe', ['/c', gradlew, 'deploy', '--no-daemon'], {
+    cwd: projectDir,
     shell: false,
     windowsHide: true, // cosmetic only — no console-window flash; argv/cwd unaffected
   });
