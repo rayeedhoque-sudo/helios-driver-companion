@@ -39,6 +39,16 @@ const COOLDOWN_MS = 900; // after a finger-count fire, so one gesture = one acti
 const MIN_CONFIDENCE = 0.6;
 
 // --- swipe path ---
+// SWIPE_DX and SWIPE_STILL_SPEED were rescaled by 0.75 on 2026-07-25 when the
+// capture switched from a cropped 4:3 frame to the camera's full 16:9 one. Both are
+// fractions of FRAME WIDTH, and the frame got wider, so the same physical hand
+// movement now covers less of it — without rescaling, every swipe would have needed
+// ~33% more reach than the values tuned by feel. The factor is measured, not
+// assumed: template-matching the same scene at both settings put the old 4:3 frame
+// at 74% of the 16:9 width (NCC 0.98) at 99% of its height — a clean side-crop.
+// Rescale both together if the capture resolution ever changes again; they are tied
+// by the invariant below.
+//
 // Speeds are per SECOND, not per frame, so retuning DETECT_HZ doesn't silently
 // change how fast a hand has to move. Frame counts are the exception and scale
 // with DETECT_HZ by design (they express "briefly", not "this fast").
@@ -56,8 +66,8 @@ const SWIPE_ARM_FRAMES = 2; // palm held STILL this long to arm (~83 ms at 24 Hz
 const SWIPE_ARM_MOVING_FRAMES = 6;
 const SWIPE_ARM_FINGERS = 4; // clear open palm needed to ARM a swipe...
 const SWIPE_HOLD_FINGERS = 2; // ...but only this many to KEEP one alive mid-sweep
-const SWIPE_STILL_SPEED = 0.25; // frame-widths/sec still counted as "holding steady"
-const SWIPE_DX = 0.13; // wrist travel that counts as one tab of swipe
+const SWIPE_STILL_SPEED = 0.19; // frame-widths/sec still counted as "holding steady"
+const SWIPE_DX = 0.1; // wrist travel that counts as one tab of swipe
 const SWIPE_WINDOW_MS = 400; // ...within this long
 const SWIPE_MIN_SAMPLES = 2; // samples needed to measure it — 2 so fast swipes register
 const SWIPE_REPEAT_MS = 150; // between consecutive tabs of one continuous sweep
