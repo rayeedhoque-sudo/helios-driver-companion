@@ -37,7 +37,17 @@ const res = await build({
   plugins: [stub],
 });
 const mod = await import(`data:text/javascript;base64,${Buffer.from(res.outputFiles[0].text).toString('base64')}`);
-const { extendedCount, classify, reset, DWELL_FRAMES, SWIPE_ARM_FRAMES, COOLDOWN_MS, SWIPE_DX } = mod.__test;
+const {
+  extendedCount,
+  classify,
+  reset,
+  DETECT_HZ,
+  DWELL_FRAMES,
+  SWIPE_ARM_FRAMES,
+  SWIPE_DX,
+  SWIPE_REVERSE_LOCK_MS,
+
+} = mod.__test;
 
 // Build a 21-landmark hand, laid out like a real one seen palm-on with the fingers
 // pointing up. Landmark ids are MediaPipe's.
@@ -138,7 +148,7 @@ function run(frames, startAt = 10_000) {
   for (const f of frames) {
     const lm = hand(f.ext).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
     classify({ landmarks: [lm] }, act, t);
-    t += 1000 / 12; // DETECT_HZ
+    t += 1000 / DETECT_HZ;
   }
   return act.fired;
 }
@@ -177,26 +187,95 @@ check(
   [],
 );
 
-// Open palm travelling right -> exactly one 'next', despite many qualifying frames.
-const travel = (n, total) => Array.from({ length: n }, (_, i) => ({ ext: OPEN, x: -(total * i) / (n - 1) }));
-check('open palm swipe fires once', run([...rep(SWIPE_ARM_FRAMES, { ext: OPEN }), ...travel(5, SWIPE_DX + 0.06)]), [
-  'next',
-]);
+// Open palm travelling right -> 'next'. `from` lets a stroke start where the last
+// one ended, so return strokes can be modelled.
+const travel = (n, total, ext = OPEN, from = 0) =>
+  Array.from({ length: n }, (_, i) => ({ ext, x: from - (total * i) / (n - 1) }));
+// Still frames at x, long enough to arm.
+const armAt = (x = 0) => rep(SWIPE_ARM_FRAMES, { ext: OPEN, x });
+
+check('open palm swipe fires once', run([...armAt(), ...travel(5, SWIPE_DX + 0.06)]), ['next']);
 
 // THE REGRESSION GUARD for the arming gate: a hand crossing the whole frame fast,
 // with no preceding pose hold — an arm reaching past the laptop, a coach gesturing
-// over it. The arming gate eats the opening frames, so the trail never reaches the
-// 3 samples a swipe needs. Frame count is a literal, NOT derived from
-// SWIPE_ARM_FRAMES, so the case stays meaningful if that constant is tuned.
+// over it. It never holds still, so it never arms.
 // Verified non-vacuous: with SWIPE_ARM_FRAMES = 0 this returns ['next'].
 check('fast sweep with no pose hold does not fire', run(travel(5, 0.9)), []);
 
 // The realistic version of the same hazard, and the case the stillness check exists
-// for: an arm crossing the frame over ~1 s at 12 Hz is ~12 frames — long enough that
-// a plain N-frame arming delay lapses and the trail still fills. Only requiring the
-// palm to PAUSE first rejects it.
-// Verified non-vacuous: with SWIPE_STILL_DX = 999 this returns ['next'].
+// for: an arm crossing the frame over ~1 s is slow enough that a plain N-frame
+// arming delay would lapse and the trail still fill. Only requiring the palm to
+// PAUSE first rejects it.
+// Verified non-vacuous: with SWIPE_STILL_SPEED = 999 this returns ['next'].
 check('slow arm crossing the frame does not fire', run(travel(12, 0.9)), []);
+
+// ---- reported on camera 2026-07-25: swipes were slow, one-shot, and dropped out --
+// Each case below is one of those complaints.
+
+// "I should be able to swipe through multiple tabs with the same palm." One
+// continuous sweep must keep advancing, not stop after the first tab.
+{
+  const fired = run([...armAt(), ...travel(24, 1.0)]);
+  const ok = fired.length >= 2 && fired.every((f) => f === 'next');
+  try {
+    assert.ok(ok, `expected >=2 consecutive 'next', got [${fired}]`);
+    console.log(`  ok   continuous sweep advances repeatedly -> [${fired}]`);
+  } catch (err) {
+    failed++;
+    console.error(`  FAIL continuous sweep advances repeatedly: ${err.message}`);
+  }
+}
+
+// "after every swipe i have to take my palm off the camera and restart". Bringing
+// the hand back for a second swipe must not fire the opposite direction and undo it.
+// The return is deliberately UNHURRIED (10 frames ~ 420 ms) so it outlasts
+// SWIPE_REPEAT_MS and actually reaches the reverse lock — a snappier return is
+// swallowed by the repeat gate and would test nothing. Frame count is a literal,
+// not derived from either constant.
+// Verified non-vacuous: with SWIPE_REVERSE_LOCK_MS = 0 this returns ['next','prev'].
+check(
+  'return stroke does not undo the swipe',
+  run([...armAt(), ...travel(5, SWIPE_DX + 0.06), ...travel(10, -(SWIPE_DX + 0.06), OPEN, -(SWIPE_DX + 0.06))]),
+  ['next'],
+);
+
+// "a slight sweep motion which overlaps fingers and doesnt make all 5 visible".
+// Once armed, the count may collapse to 2 mid-sweep and the swipe must survive.
+check(
+  'swipe survives fingers merging mid-sweep',
+  run([...armAt(), ...travel(5, SWIPE_DX + 0.06, ['index', 'middle'])]),
+  ['next'],
+);
+
+// "i should be able to swipe fast while still getting recognized". A sweep over
+// only SWIPE_MIN_SAMPLES frames must still register.
+check('fast two-sample swipe registers', run([...armAt(), ...travel(2, SWIPE_DX + 0.06)]), ['next']);
+
+// A deliberate reversal after the lock expires is still a real gesture.
+{
+  const pause = Math.ceil((SWIPE_REVERSE_LOCK_MS / 1000) * DETECT_HZ) + 2;
+  check(
+    'reversal after the lock expires does fire',
+    run([
+      ...armAt(),
+      ...travel(5, SWIPE_DX + 0.06),
+      ...rep(pause, { ext: OPEN, x: -(SWIPE_DX + 0.06) }),
+      ...travel(5, -(SWIPE_DX + 0.06), OPEN, -(SWIPE_DX + 0.06)),
+    ]),
+    ['next', 'prev'],
+  );
+}
+
+// A palm gone still ends the swipe session, so finger-counts work again without
+// taking your hand out of frame. The still period is a LITERAL 20 frames, not
+// SWIPE_IDLE_DISARM_FRAMES + n — deriving it from the constant would scale the input
+// with any mutation and the case could never fail.
+// Verified non-vacuous: with SWIPE_IDLE_DISARM_FRAMES = 9999 this returns [].
+check(
+  'palm going still disarms and hands back to counts',
+  run([...armAt(), ...rep(20, { ext: OPEN }), ...rep(DWELL_FRAMES + 2, { ext: ['index', 'middle'] })]),
+  ['open:2'],
+);
 
 // Cooldown: a second gesture immediately after a fire is swallowed.
 check(

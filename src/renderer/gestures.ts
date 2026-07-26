@@ -26,14 +26,25 @@ export interface GestureActions {
 // ---- tuning knobs ------------------------------------------------------------
 // Real cameras, real lighting, real hands — these are meant to be tuned on the
 // actual driver laptop, not derived. Raise DWELL/COOLDOWN if you get false fires.
-const DETECT_HZ = 12; // inference rate; the DS + Limelight stream share this CPU
-const DWELL_FRAMES = 6; // consecutive stable frames before a finger-count fires (~0.5 s)
-const SWIPE_ARM_FRAMES = 3; // open palm must be held STILL this long before a swipe can start
-const SWIPE_STILL_DX = 0.04; // per-frame wrist travel still counted as "holding steady"
-const COOLDOWN_MS = 900; // ignore everything right after a fire, so one gesture = one action
-const SWIPE_DX = 0.22; // normalized wrist travel across the frame that counts as a swipe
-const SWIPE_WINDOW_MS = 600; // ...within this long
+const DETECT_HZ = 24; // inference rate; the DS + Limelight stream share this CPU
+const DWELL_FRAMES = 12; // consecutive stable frames before a finger-count fires (~0.5 s)
+const COOLDOWN_MS = 900; // after a finger-count fire, so one gesture = one action
 const MIN_CONFIDENCE = 0.6;
+
+// --- swipe path ---
+// Speeds are per SECOND, not per frame, so retuning DETECT_HZ doesn't silently
+// change how fast a hand has to move. Frame counts are the exception and scale
+// with DETECT_HZ by design (they express "briefly", not "this fast").
+const SWIPE_ARM_FRAMES = 3; // palm held still this long to arm (~125 ms at 24 Hz)
+const SWIPE_ARM_FINGERS = 4; // clear open palm needed to ARM a swipe...
+const SWIPE_HOLD_FINGERS = 2; // ...but only this many to KEEP one alive mid-sweep
+const SWIPE_STILL_SPEED = 0.6; // frame-widths/sec still counted as "holding steady"
+const SWIPE_DX = 0.22; // wrist travel that counts as a swipe
+const SWIPE_WINDOW_MS = 400; // ...within this long
+const SWIPE_MIN_SAMPLES = 2; // samples needed to measure it — 2 so fast swipes register
+const SWIPE_REPEAT_MS = 250; // between consecutive swipes of one continuous sweep
+const SWIPE_REVERSE_LOCK_MS = 600; // after a fire, ignore the opposite direction this long
+const SWIPE_IDLE_DISARM_FRAMES = 8; // a palm gone still this long ends the swipe session
 // How far past its middle joint a finger must reach to count as extended. Raise if
 // half-curled fingers register; lower if fully-extended ones are missed.
 const FINGER_MARGIN = 1.08;
@@ -87,7 +98,10 @@ let lastFireAt = 0;
 let stableCount = 0;
 let stableFingers = -1;
 let palmFrames = 0;
-let armX = 0; // wrist x during arming, to tell "held steady" from "passing through"
+let armX = 0; // previous wrist x, for the speed test (arming + idle disarm)
+let armT = 0; // ...and its timestamp, so speed is per-second not per-frame
+let idleFrames = 0; // consecutive near-stationary frames while armed
+let lastDir = 0; // direction of the last swipe, for the reverse lock
 type Sample = { x: number; t: number };
 let trail: Sample[] = [];
 
@@ -110,59 +124,89 @@ async function ensureLandmarker(): Promise<HandLandmarker> {
 
 // Decide what (if anything) the current frame means, and fire at most one action.
 function classify(res: HandLandmarkerResult, actions: GestureActions, now: number): void {
-  if (now - lastFireAt < COOLDOWN_MS) return;
-
   const hand = res.landmarks?.[0] as Pt[] | undefined;
   if (!hand || hand.length < 21) {
     stableCount = 0;
     stableFingers = -1;
     palmFrames = 0;
+    idleFrames = 0;
+    lastDir = 0;
     trail = [];
     return;
   }
 
   const fingers = extendedCount(hand);
+  const x = 1 - hand[0].x; // mirrored, so hand-moves-right reads as "next"
+  const armed = palmFrames >= SWIPE_ARM_FRAMES;
 
   // --- open-palm swipe -> cycle focus ---
-  // Mirrored so it reads naturally: hand moves right on screen = "next".
-  if (fingers >= 4) {
-    const x = 1 - hand[0].x;
-    // Arm on a palm held STILL, then track motion. Merely requiring the palm to be
-    // present for a few frames does not work — an arm crossing the frame (reaching
-    // past the laptop, a coach gesturing over it) stays open-handed the whole way
-    // and still accumulates enough trail to fire. Requiring it to pause first is
-    // what separates "swiped on purpose" from "passed through". The finger-count
-    // path has DWELL_FRAMES for the same reason; this is the swipe path's version.
-    if (palmFrames < SWIPE_ARM_FRAMES) {
-      palmFrames = palmFrames > 0 && Math.abs(x - armX) <= SWIPE_STILL_DX ? palmFrames + 1 : 1;
-      armX = x;
-      trail = [];
-      stableCount = 0;
-      stableFingers = -1;
-      return;
-    }
-    trail.push({ x, t: now });
-    trail = trail.filter((s) => now - s.t <= SWIPE_WINDOW_MS);
-    if (trail.length >= 3) {
-      const dx = trail[trail.length - 1].x - trail[0].x;
-      if (Math.abs(dx) >= SWIPE_DX) {
-        if (dx > 0) actions.focusNext();
-        else actions.focusPrev();
-        onStatus(dx > 0 ? 'next panel' : 'previous panel', 'live');
-        lastFireAt = now;
-        trail = [];
-        palmFrames = 0;
-        stableCount = 0;
-      }
-    }
+  // Arming demands a clear open palm, but once armed a much lower count keeps the
+  // swipe alive: in a real sweep the fingers rotate, overlap and merge, and
+  // MediaPipe stops resolving all five. Requiring 4+ throughout is what made fast,
+  // natural swipes drop out mid-motion.
+  if (fingers >= (armed ? SWIPE_HOLD_FINGERS : SWIPE_ARM_FINGERS)) {
     // An open palm is the swipe pose, never a finger-count pose.
     stableCount = 0;
     stableFingers = -1;
+
+    // Speed since the previous frame, per second so DETECT_HZ can be retuned freely.
+    const dt = Math.max(now - armT, 1) / 1000;
+    const speed = palmFrames > 0 ? Math.abs(x - armX) / dt : Infinity;
+    armX = x;
+    armT = now;
+
+    // Arm on a palm held STILL. Presence alone does not work — an arm crossing the
+    // frame (reaching past the laptop, a coach gesturing over it) stays open-handed
+    // the whole way and would accumulate enough trail to fire. Pausing first is what
+    // separates "swiped on purpose" from "passed through".
+    if (!armed) {
+      palmFrames = speed <= SWIPE_STILL_SPEED ? palmFrames + 1 : 1;
+      trail = [];
+      return;
+    }
+
+    // A palm that stops moving ends the swipe session, handing control back to the
+    // finger-count gestures without making you take your hand out of frame.
+    idleFrames = speed <= SWIPE_STILL_SPEED ? idleFrames + 1 : 0;
+    if (idleFrames >= SWIPE_IDLE_DISARM_FRAMES) {
+      palmFrames = 0;
+      idleFrames = 0;
+      lastDir = 0;
+      trail = [];
+      return;
+    }
+
+    trail.push({ x, t: now });
+    trail = trail.filter((s) => now - s.t <= SWIPE_WINDOW_MS);
+    if (now - lastFireAt < SWIPE_REPEAT_MS || trail.length < SWIPE_MIN_SAMPLES) return;
+
+    const dx = trail[trail.length - 1].x - trail[0].x;
+    if (Math.abs(dx) < SWIPE_DX) return;
+    const dir = dx > 0 ? 1 : -1;
+    // Ignore the return stroke. Swiping repeatedly means bringing your hand back,
+    // and that return is itself a qualifying sweep in the opposite direction — it
+    // would undo the swipe you just made. Briefly lock out the reverse instead of
+    // demanding you leave the frame and start over.
+    if (dir === -lastDir && now - lastFireAt < SWIPE_REVERSE_LOCK_MS) {
+      trail = [];
+      return;
+    }
+    if (dir > 0) actions.focusNext();
+    else actions.focusPrev();
+    onStatus(dir > 0 ? 'next panel' : 'previous panel', 'live');
+    lastFireAt = now;
+    lastDir = dir;
+    // Stay armed: a continuous sweep keeps advancing tabs, no re-pause needed.
+    trail = [];
     return;
   }
 
   palmFrames = 0;
+  idleFrames = 0;
+  lastDir = 0;
   trail = [];
+
+  if (now - lastFireAt < COOLDOWN_MS) return;
 
   // --- N fingers held still -> open the Nth panel ---
   if (fingers >= 1 && fingers <= 3) {
@@ -248,10 +292,18 @@ export const __test = {
     stableCount = 0;
     stableFingers = -1;
     palmFrames = 0;
+    idleFrames = 0;
+    lastDir = 0;
+    armX = 0;
+    armT = 0;
     trail = [];
   },
+  DETECT_HZ,
   DWELL_FRAMES,
-  SWIPE_ARM_FRAMES,
   COOLDOWN_MS,
+  SWIPE_ARM_FRAMES,
   SWIPE_DX,
+  SWIPE_REPEAT_MS,
+  SWIPE_REVERSE_LOCK_MS,
+  SWIPE_IDLE_DISARM_FRAMES,
 };
