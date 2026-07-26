@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: http: https:; media-src 'self' http: https:; connect-src 'self' ws: wss: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self';"
+      content="default-src 'self'; img-src 'self' data: http: https:; media-src 'self' blob: http: https:; connect-src 'self' ws: wss: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:;"
     />
     <title>Helios · Driver Companion</title>
     <link rel="stylesheet" href="dockview.css" />
@@ -33,6 +33,8 @@
             <button id="btn-panels" class="tbtn">+ Panels</button>
             <div id="panels-menu"></div>
           </div>
+          <button id="btn-gestures" class="tbtn" title="Webcam hand-gesture panel navigation (focus only)">Gestures</button>
+          <span id="gesture-badge" class="gesture-badge idle">off</span>
           <button id="btn-dock" class="tbtn">Dock DS</button>
           <button id="btn-launch-ds" class="tbtn tbtn-accent">Launch DS</button>
           <button id="btn-settings" class="tbtn tbtn-icon" title="Settings" aria-label="Settings">⚙</button>
@@ -46,6 +48,10 @@
       <footer id="dock-strip">
         <span class="dock-hint">Drop the Driver Station here</span>
       </footer>
+
+      <!-- Gesture framing preview — hidden unless gestures are armed. Muted +
+           playsinline so it never grabs audio focus or goes fullscreen. -->
+      <video id="gesture-preview" muted playsinline></video>
     </div>
 
     <!-- ================= SETTINGS MODAL ================= -->

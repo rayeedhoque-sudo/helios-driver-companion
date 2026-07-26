@@ -1151,3 +1151,44 @@ button {
   letter-spacing: 0.5px;
   color: var(--text-faint);
 }
+
+/* ---- gesture navigator (webcam panel control) ------------------------------ */
+.gesture-badge {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  align-self: center;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.gesture-badge.idle {
+  color: var(--muted, #8b8397);
+}
+.gesture-badge.live {
+  color: var(--accent);
+  background: var(--accent-soft);
+  opacity: 1;
+}
+.gesture-badge.error {
+  color: #ff7b7b;
+  background: rgba(255, 123, 123, 0.14);
+  opacity: 1;
+}
+
+/* Framing preview: only shown while armed, so the camera is never live-but-invisible. */
+#gesture-preview {
+  display: none;
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  width: 160px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  transform: scaleX(-1); /* mirror — matches the mirrored swipe mapping in gestures.ts */
+  z-index: 40;
+  pointer-events: none;
+}
+body.gestures-on #gesture-preview {
+  display: block;
+}

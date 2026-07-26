@@ -20,6 +20,13 @@ import { initStore, getSettings, updateSettings, onSettings, type Settings } fro
 import { PANELS, getPanelDef } from './panels-registry';
 import { onConnection, getConnState, ntConnect, type ConnState } from './nt';
 import { armDsStationAdopt } from './field';
+import {
+  startGestures,
+  stopGestures,
+  isRunning,
+  onGestureStatus,
+  type GestureActions,
+} from './gestures';
 
 declare global {
   interface Window {
@@ -161,6 +168,58 @@ function wireKeybinds(api: DockviewApi): void {
   });
 }
 
+// Webcam gesture control. Same three focus actions as the keybinds above, so the
+// safety argument is identical — gestures can't click anything. Deliberately NOT
+// persisted: it re-arms only when someone presses the button, so the app never
+// boots at a competition with the camera already live.
+function wireGestures(api: DockviewApi): void {
+  const btn = el<HTMLButtonElement>('btn-gestures');
+  const badge = el('gesture-badge');
+  const preview = el<HTMLVideoElement>('gesture-preview');
+
+  const actions: GestureActions = {
+    openNth: (n) => {
+      const def = PANELS[n - 1];
+      if (def) openPanel(api, def.id);
+    },
+    focusNext: () => api.moveToNext({ includePanel: true }),
+    focusPrev: () => api.moveToPrevious({ includePanel: true }),
+  };
+
+  onGestureStatus((text, kind) => {
+    badge.textContent = text;
+    badge.className = `gesture-badge ${kind}`;
+  });
+
+  const render = (): void => {
+    btn.classList.toggle('tbtn-accent', isRunning());
+    btn.textContent = isRunning() ? 'Gestures ON' : 'Gestures';
+    document.body.classList.toggle('gestures-on', isRunning());
+  };
+
+  btn.addEventListener('click', () => {
+    if (isRunning()) {
+      stopGestures();
+      render();
+      return;
+    }
+    btn.disabled = true;
+    void startGestures(actions, preview)
+      .catch((err: unknown) => {
+        console.error('[gestures] start failed:', err);
+        badge.textContent = 'camera unavailable';
+        badge.className = 'gesture-badge error';
+        stopGestures();
+      })
+      .finally(() => {
+        btn.disabled = false;
+        render();
+      });
+  });
+
+  render();
+}
+
 // "+ Panels" top-bar menu: lists every registry panel; click opens/focuses it.
 function wirePanelsMenu(api: DockviewApi): void {
   const btn = el('btn-panels');
@@ -211,6 +270,7 @@ async function boot(): Promise<void> {
   wireLayoutPersistence(dock);
   wirePanelsMenu(dock);
   wireKeybinds(dock);
+  wireGestures(dock);
 
   // The station picker + follow-the-DS lock now live inside the field panel (field.ts).
   wireSettingsModal();

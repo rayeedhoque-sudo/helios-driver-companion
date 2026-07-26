@@ -113,6 +113,13 @@ function createWindow(): void {
   });
   mainWindow = win;
 
+  // Camera access for the gesture navigator. Chromium denies getUserMedia by
+  // default in Electron, so grant 'media' — and ONLY 'media' — to our own loaded
+  // page. Everything else stays denied rather than falling through to allow.
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media');
+  });
+
   win.maximize();
   win.once('ready-to-show', () => win.show());
 

@@ -66,5 +66,13 @@ cpSync(
   path.join(dist, 'dockview.css'),
 );
 cpSync(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
+// MediaPipe vision WASM runtime for the gesture navigator. Vendored into dist/ (not
+// fetched from Google's CDN) because the competition field has no internet. The
+// .task model rides along in assets/.
+cpSync(
+  path.join(root, 'node_modules/@mediapipe/tasks-vision/wasm'),
+  path.join(dist, 'mediapipe'),
+  { recursive: true },
+);
 
 console.log('build complete -> dist/');
