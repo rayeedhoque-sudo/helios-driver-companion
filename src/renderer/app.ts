@@ -273,6 +273,18 @@ function wireKeybinds(api: DockviewApi): void {
   });
 }
 
+// Which panel each finger-count gesture opens: 1 finger -> [0], 2 -> [1], 3 -> [2].
+// Only 1-3 are reachable, because 4+ extended fingers is the swipe pose.
+//
+// Listed explicitly rather than read off PANELS[n - 1]. The registry order also
+// drives Ctrl+1..9 AND is the layout-persistence order, so reordering the registry
+// to change what a gesture opens would quietly move those too. Changing a gesture
+// should be a one-line edit here and touch nothing else.
+//
+// NOTE: Ctrl+1..9 still follows registry order, so Ctrl+3 opens Orientation while
+// three fingers opens Controls. Deliberate — only the gesture was asked to change.
+const GESTURE_PANELS: readonly string[] = ['limelight', 'field', 'controls'];
+
 // Webcam gesture control. The focus actions carry the same safety argument as the
 // keybinds above — they can't click anything; pinch drag is the one exception and is
 // documented in gestures.ts.
@@ -290,8 +302,8 @@ function wireGestures(api: DockviewApi): void {
 
   const actions: GestureActions = {
     openNth: (n) => {
-      const def = PANELS[n - 1];
-      if (def) openPanel(api, def.id);
+      const id = GESTURE_PANELS[n - 1];
+      if (id) openPanel(api, id);
     },
     // Side-scoped: a gesture only ever cycles the half its hand owns.
     focusNext: (side) => cycleSide(api, side, 1),
@@ -352,6 +364,12 @@ function wireGestures(api: DockviewApi): void {
   previewBtn.addEventListener('click', () => {
     void updateSettings({ previewOn: !getSettings().previewOn }).then(render);
   });
+
+  // A typo in GESTURE_PANELS would make that gesture silently do nothing, since
+  // openPanel ignores unknown ids. Say so loudly at boot instead.
+  for (const id of GESTURE_PANELS) {
+    if (!getPanelDef(id)) console.error(`[gestures] GESTURE_PANELS references unknown panel id "${id}"`);
+  }
 
   render();
   if (getSettings().gesturesOn) arm();
