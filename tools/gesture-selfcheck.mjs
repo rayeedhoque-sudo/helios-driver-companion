@@ -211,7 +211,15 @@ check('fast sweep with no pose hold does not fire', run(travel(5, 0.9)), []);
 // exactly this case: an arm crossing the frame open-handed now reads as a swipe.
 // Documented rather than silently dropped, so the regression is visible if it
 // becomes a nuisance at an event. Restore the stillness-only rule to undo it.
-check('sustained open-palm crossing now DOES fire (accepted trade-off)', run(travel(12, 0.9)), ['next']);
+check('sustained open-palm crossing now DOES fire (accepted trade-off)', run(travel(12, 0.9)), ['next', 'next']);
+
+// THE REAL GESTURE, measured on camera 2026-07-25 and replayed at the app's own
+// 24 Hz: a quick flick with NO still-hold, ~7 frames covering ~0.24 frame-widths.
+// One stroke must land exactly one tab. Before the trail kept the frames spent
+// arming, this fired NOTHING at 24 Hz — arming ate ~250 ms of a ~300 ms stroke and
+// the remainder never reached SWIPE_DX. Two of the user's three real strokes were
+// being dropped.
+check('short quick flick with no still-hold fires exactly once', run(travel(7, 0.24)), ['next']);
 
 // The brief version is still rejected: SWIPE_ARM_MOVING_FRAMES means a hand has to
 // look like an open palm for a while, so a quick pass-through still does nothing.

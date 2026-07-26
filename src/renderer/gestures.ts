@@ -262,17 +262,24 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     stableCount = 0;
     stableFingers = -1;
 
+    // Track the wrist from the FIRST palm frame, including the ones spent arming.
+    // Arming takes SWIPE_ARM_MOVING_FRAMES (~250 ms), and a quick flick is only
+    // ~300 ms long — discarding the travel that happened while arming threw away
+    // most of the stroke and the swipe never reached SWIPE_DX. The arming window is
+    // part of the gesture, so it belongs in the trail; SWIPE_WINDOW_MS still ages
+    // stale samples out, and a hand that pauses first simply contributes stationary
+    // samples that cancel.
+    trail.push({ x, t: now });
+    trail = trail.filter((s) => now - s.t <= SWIPE_WINDOW_MS);
+
     // Two ways in: a short STILL hold (deliberate, and the stricter of the two), or
     // a longer run of open-palm frames for a hand that is already moving.
     if (!armed) {
       palmFrames++;
       palmStillFrames = moving ? 0 : palmStillFrames + 1;
-      trail = [];
       return;
     }
 
-    trail.push({ x, t: now });
-    trail = trail.filter((s) => now - s.t <= SWIPE_WINDOW_MS);
     if (now - lastFireAt < SWIPE_REPEAT_MS || trail.length < SWIPE_MIN_SAMPLES) return;
 
     const dx = trail[trail.length - 1].x - trail[0].x;
