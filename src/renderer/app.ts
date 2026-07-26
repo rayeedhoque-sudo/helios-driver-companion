@@ -16,6 +16,7 @@ import {
   type IContentRenderer,
   type SerializedDockview,
   type DockviewGroupPanel,
+  type IDockviewPanel,
 } from 'dockview-core';
 import { initStore, getSettings, updateSettings, onSettings, type Settings } from './store';
 import { PANELS, getPanelDef } from './panels-registry';
@@ -139,6 +140,77 @@ function cycleSide(api: DockviewApi, side: 'left' | 'right', step: 1 | -1): void
   next?.api.setActive();
 }
 
+// ---- pinch-drag: move a tab between the two halves --------------------------
+// pinchStart grabs the active tab of the hand's own side; pinchMove previews where
+// it would land; pinchDrop commits. The preview exists because a drop rewrites the
+// persisted layout — you should be able to see the destination before letting go.
+let dragPanel: IDockviewPanel | null = null;
+let dragTarget: 'left' | 'right' | null = null;
+
+function dragPreviewEl(): HTMLElement {
+  return el('drag-preview');
+}
+
+function hideDragPreview(): void {
+  dragPreviewEl().classList.remove('open');
+}
+
+function beginDrag(api: DockviewApi, side: 'left' | 'right'): void {
+  const panel = groupForSide(api, side)?.activePanel ?? null;
+  dragPanel = panel;
+  dragTarget = side;
+  if (!panel) return; // nothing on that side to pick up — stay inert
+  const p = dragPreviewEl();
+  p.textContent = `moving "${panel.title}"`;
+  p.classList.add('open');
+  console.log(`[gesture] grabbed "${panel.title}" from the ${side}`);
+}
+
+// Preview follows the hand: whichever half of the frame it is over is the half the
+// tab lands in. x is already mirrored, so 0 is the user's left and matches the
+// screen's left.
+function updateDrag(api: DockviewApi, x: number): void {
+  if (!dragPanel) return;
+  const side: 'left' | 'right' = x < 0.5 ? 'left' : 'right';
+  dragTarget = side;
+  const group = groupForSide(api, side);
+  const p = dragPreviewEl();
+  if (!group) return;
+  const r = group.element.getBoundingClientRect();
+  p.style.left = `${r.left}px`;
+  p.style.top = `${r.top}px`;
+  p.style.width = `${r.width}px`;
+  p.style.height = `${r.height}px`;
+  const already = dragPanel.api.group === group;
+  p.textContent = already ? `"${dragPanel.title}" — stays here` : `move "${dragPanel.title}" here`;
+  p.classList.toggle('same', already);
+}
+
+function commitDrag(api: DockviewApi): void {
+  const panel = dragPanel;
+  const side = dragTarget;
+  dragPanel = null;
+  dragTarget = null;
+  hideDragPreview();
+  if (!panel || !side) return;
+  const group = groupForSide(api, side);
+  // Dropping a tab back on its own group is a no-op, not a move — this is what keeps
+  // an aborted drag from churning the persisted layout for no reason.
+  if (!group || panel.api.group === group) {
+    console.log('[gesture] drop cancelled — same group');
+    return;
+  }
+  panel.api.moveTo({ group });
+  console.log(`[gesture] moved "${panel.title}" to the ${side}`);
+}
+
+function cancelDrag(): void {
+  if (dragPanel) console.log('[gesture] drag cancelled — nothing moved');
+  dragPanel = null;
+  dragTarget = null;
+  hideDragPreview();
+}
+
 function restoreLayout(api: DockviewApi): void {
   const saved = getSettings().layout;
   if (saved) {
@@ -218,6 +290,10 @@ function wireGestures(api: DockviewApi): void {
     // Side-scoped: a gesture only ever cycles the half its hand owns.
     focusNext: (side) => cycleSide(api, side, 1),
     focusPrev: (side) => cycleSide(api, side, -1),
+    pinchStart: (side) => beginDrag(api, side),
+    pinchMove: (x) => updateDrag(api, x),
+    pinchDrop: () => commitDrag(api),
+    pinchCancel: () => cancelDrag(),
   };
 
   // Debug/verification hook, same precedent as __dock above: the side-isolation
@@ -238,6 +314,7 @@ function wireGestures(api: DockviewApi): void {
   btn.addEventListener('click', () => {
     if (isRunning()) {
       stopGestures();
+      cancelDrag(); // never leave a half-finished grab behind
       render();
       return;
     }

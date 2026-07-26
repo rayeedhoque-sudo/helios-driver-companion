@@ -1195,3 +1195,33 @@ button {
 body.gestures-on #gesture-preview {
   display: block;
 }
+
+/* Drop preview for pinch-drag: outlines the half the tab will land in. Deliberately
+   loud — a drop rewrites the persisted layout, so the destination must be obvious
+   before the palm opens. */
+#drag-preview {
+  display: none;
+  position: fixed;
+  z-index: 45;
+  pointer-events: none;
+  border: 3px dashed var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+#drag-preview.open {
+  display: flex;
+}
+/* Hovering over the tab's current home — dropping here changes nothing. */
+#drag-preview.same {
+  border-color: #6b6478;
+  background: rgba(107, 100, 120, 0.12);
+  color: #8b8397;
+}

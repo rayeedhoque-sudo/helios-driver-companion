@@ -6,12 +6,19 @@
 // dist/ by build.mjs, so this works with no internet — the field has none.
 //
 // ============================ SAFETY (read before editing) ============================
-// Gestures may ONLY call the three focus actions passed in as `GestureActions`:
-// openPanel / focusNext / focusPrev. They must NEVER synthesize a click, a key event,
-// or any DOM activation. panels.ts has TEST MODE rows that command motors and deploy.ts
-// deploys code to the robot — a false positive that changes which tab is focused is
-// harmless, one that presses a button is not. Nothing here moves or closes a panel
-// either, so a misread can't churn the layout blob app.ts persists.
+// Gestures may ONLY call the actions passed in as `GestureActions`. They must NEVER
+// synthesize a click, a key event, or any DOM activation. panels.ts has TEST MODE rows
+// that command motors and deploy.ts deploys code to the robot — a false positive that
+// changes which tab is focused is harmless, one that presses a button is not. That
+// rule is absolute and is what keeps this feature safe to arm during a match.
+//
+// One action group is NOT read-only: pinch drag MOVES a panel between dock groups,
+// and app.ts persists the layout ~400 ms after any change. A misread drop therefore
+// rewrites the saved layout, and the only recovery is "Reset layout" in settings.
+// Two mitigations, both load-bearing — do not remove them casually:
+//   * a drop only ever happens on a deliberate palm-open (PINCH_OFF hysteresis);
+//   * losing the hand mid-drag CANCELS, it never drops.
+// Nothing here closes a panel, and no gesture can create or delete one.
 // ======================================================================================
 import { FilesetResolver, HandLandmarker, type HandLandmarkerResult } from '@mediapipe/tasks-vision';
 
@@ -22,12 +29,26 @@ import { FilesetResolver, HandLandmarker, type HandLandmarkerResult } from '@med
  */
 export type DockSide = 'left' | 'right';
 
-/** The only things a gesture is allowed to do. Deliberately focus-only — see header. */
+/**
+ * The only things a gesture is allowed to do.
+ *
+ * Everything except the pinch group is focus-only. The pinch group DOES rearrange
+ * panels, which is the one thing here that changes the persisted layout — see the
+ * safety note at the top of the file.
+ */
 export interface GestureActions {
   /** Open/focus the Nth registry panel, 1-based. */
   openNth(n: number): void;
   focusNext(side: DockSide): void;
   focusPrev(side: DockSide): void;
+  /** Pick up the active tab of `side`. No-op if that side has nothing to grab. */
+  pinchStart(side: DockSide): void;
+  /** Hand moved while pinching. `x`/`y` are 0..1 across the frame, x mirrored so 0 is YOUR left. */
+  pinchMove(x: number, y: number): void;
+  /** Palm opened — commit the move to wherever the preview is showing. */
+  pinchDrop(): void;
+  /** Hand lost or gesture abandoned — put everything back, change nothing. */
+  pinchCancel(): void;
 }
 
 // ---- tuning knobs ------------------------------------------------------------
@@ -79,6 +100,26 @@ const SWIPE_REVERSE_LOCK_MS = 600; // after a fire, ignore the opposite directio
 // which is what hands control back to the 1-3 finger gestures (~330 ms at 24 Hz).
 const SWIPE_MERGE_GRACE_FRAMES = 8;
 
+// --- pinch path: drag a tab between the two halves ---------------------------
+// Pinch measure is thumb tip (4) to index tip (8) over the palm's own size
+// (wrist 0 to middle MCP 9), so it is scale-free — it does not care how close your
+// hand is to the camera.
+//
+// Measured on the driver laptop's camera 2026-07-25, 505 held-pinch frames and 63
+// open-palm frames at the app's real capture settings:
+//   held pinch (still and dragging): 0.06 - 0.21, p90 0.21
+//   open palm:                       1.24 - 1.34
+// An enormous gap. At PINCH_ON 0.45, zero held-pinch frames read as released and
+// zero open-palm frames read as pinched.
+//
+// Worth knowing: a pinch reads extendedCount 0, NOT 3 as the visible finger count
+// suggests — so it does not collide with the 1-3 finger panel gestures. The pinch
+// branch still runs before them and returns, because during a drag the count
+// flickers between 0 and 1 and 1 is a real gesture.
+const PINCH_ON = 0.45; // below this ratio the hand is pinching
+const PINCH_OFF = 0.75; // above this it has let go — hysteresis, so it cannot flutter
+const PINCH_HOLD_FRAMES = 3; // frames before a pinch counts as a deliberate grab
+
 // INVARIANT (pinned by tools/gesture-selfcheck.mjs): SWIPE_STILL_SPEED must stay
 // below SWIPE_DX / SWIPE_WINDOW_MS — the slowest hand that can still fire a swipe.
 // If "still" were the faster of the two there'd be a band where a slow drift counts
@@ -127,6 +168,12 @@ function extendedCount(lm: Pt[]): number {
   return n;
 }
 
+// Scale-free pinch measure: thumb tip to index tip, over the palm's own size.
+function pinchRatio(lm: Pt[]): number {
+  const span = dist(lm[0], lm[9]);
+  return span > 0 ? dist(lm[4], lm[8]) / span : Infinity;
+}
+
 // ---- runtime -----------------------------------------------------------------
 let landmarker: HandLandmarker | null = null;
 let stream: MediaStream | null = null;
@@ -146,6 +193,8 @@ let stillFrames = 0; // consecutive frames the hand has not been moving
 let lastDir = 0; // direction of the last swipe, for the reverse lock
 type Sample = { x: number; t: number };
 let trail: Sample[] = [];
+let pinching = false; // a grab is in progress
+let pinchFrames = 0; // consecutive frames the hand has looked pinched
 
 let onStatus: (text: string, kind: 'idle' | 'live' | 'error') => void = () => {};
 
@@ -168,6 +217,15 @@ async function ensureLandmarker(): Promise<HandLandmarker> {
 function classify(res: HandLandmarkerResult, actions: GestureActions, now: number): void {
   const hand = res.landmarks?.[0] as Pt[] | undefined;
   if (!hand || hand.length < 21) {
+    // Losing the hand mid-drag CANCELS rather than drops. A drop rearranges the
+    // persisted layout, so it must be something you did on purpose, never something
+    // that happened because tracking blinked.
+    if (pinching) {
+      pinching = false;
+      actions.pinchCancel();
+      onStatus('grab cancelled', 'idle');
+    }
+    pinchFrames = 0;
     stableCount = 0;
     stableFingers = -1;
     palmFrames = palmStillFrames = 0;
@@ -199,6 +257,49 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   const moving = speed > SWIPE_STILL_SPEED;
   stillFrames = moving ? 0 : stillFrames + 1;
   const recentlyMoving = stillFrames <= SWIPE_MERGE_GRACE_FRAMES;
+
+  // --- pinch: grab the active tab, drag it, open the palm to drop --------------
+  // Runs FIRST and returns, so a drag can never leak into the swipe or finger-count
+  // paths. That matters: while dragging, extendedCount flickers between 0 and 1, and
+  // 1 is a real gesture (open Limelight).
+  const pinch = pinchRatio(hand);
+  if (pinching) {
+    // Hysteresis: only a clearly open hand ends the drag, so the grip can loosen
+    // mid-drag without dropping the tab somewhere unintended.
+    if (pinch > PINCH_OFF) {
+      pinching = false;
+      pinchFrames = 0;
+      actions.pinchDrop();
+      onStatus('dropped', 'live');
+      lastFireAt = now;
+    } else {
+      actions.pinchMove(x, hand[0].y);
+    }
+    stableCount = 0;
+    stableFingers = -1;
+    palmFrames = palmStillFrames = 0;
+    trail = [];
+    return;
+  }
+
+  if (pinch < PINCH_ON) {
+    // Brief hold before committing, so a hand passing through a pinch-like shape on
+    // its way to some other pose doesn't grab a tab.
+    pinchFrames++;
+    if (pinchFrames >= PINCH_HOLD_FRAMES) {
+      pinching = true;
+      // The hand that grabs decides whose tab it is — same rule as the swipe.
+      const grabSide: DockSide = res.handedness?.[0]?.[0]?.categoryName === 'Left' ? 'left' : 'right';
+      actions.pinchStart(grabSide);
+      onStatus(`grabbed ${grabSide}`, 'live');
+    }
+    stableCount = 0;
+    stableFingers = -1;
+    palmFrames = palmStillFrames = 0;
+    trail = [];
+    return;
+  }
+  pinchFrames = 0;
 
 
   // --- open-palm swipe -> cycle focus ---
@@ -334,6 +435,8 @@ export async function startGestures(actions: GestureActions, preview: HTMLVideoE
 /** Turn gesture control off and release the camera (the LED must go out). */
 export function stopGestures(): void {
   running = false;
+  pinching = false;
+  pinchFrames = 0;
   window.clearTimeout(timer);
   timer = undefined;
   stream?.getTracks().forEach((t) => t.stop());
@@ -371,6 +474,8 @@ export const __test = {
     lastX = 0;
     lastT = 0;
     trail = [];
+    pinching = false;
+    pinchFrames = 0;
   },
   DETECT_HZ,
   DWELL_FRAMES,
@@ -382,4 +487,8 @@ export const __test = {
   SWIPE_REPEAT_MS,
   SWIPE_REVERSE_LOCK_MS,
   SWIPE_MERGE_GRACE_FRAMES,
+  PINCH_ON,
+  PINCH_OFF,
+  PINCH_HOLD_FRAMES,
+  pinchRatio,
 };

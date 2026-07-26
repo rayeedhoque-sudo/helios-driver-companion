@@ -48,6 +48,9 @@ const {
   SWIPE_WINDOW_MS,
   SWIPE_STILL_SPEED,
   SWIPE_REVERSE_LOCK_MS,
+  PINCH_ON,
+  PINCH_OFF,
+  PINCH_HOLD_FRAMES,
 } = mod.__test;
 
 // Build a 21-landmark hand, laid out like a real one seen palm-on with the fingers
@@ -69,7 +72,7 @@ const P = (x, y) => ({ x, y, z: 0 });
 
 // ext: array of digit names that are extended. marginal: one finger placed just
 // barely past its PIP — half-curled, must NOT count.
-function hand(ext = [], marginal = null) {
+function hand(ext = [], marginal = null, pinched = false) {
   const lm = Array.from({ length: 21 }, () => ({ ...wrist }));
   lm[0] = { ...wrist };
 
@@ -94,6 +97,12 @@ function hand(ext = [], marginal = null) {
   // Tucked: folded up across the palm — FURTHER from the wrist than joint 2, which
   // is precisely what fooled the old radial test.
   lm[4] = ext.includes('thumb') ? P(0.33, 0.74) : P(0.48, 0.74);
+  // Pinch: thumb tip NEAR the index tip, not exactly on it. Real pinches measured
+  // 0.06-0.21 on this camera, never 0 — and a perfect zero made the check blind,
+  // because any positive PINCH_ON threshold still passed. Same trap the thumb model
+  // fell into. pinchRatio is dist(4,8)/dist(0,9); dist(0,9) here is 0.10, so an
+  // offset of 0.015 gives 0.15, the measured median.
+  if (pinched) lm[4] = P(lm[TIP.index].x + 0.015, lm[TIP.index].y);
   return lm;
 }
 
@@ -137,6 +146,10 @@ function recorder() {
     openNth: (n) => fired.push(`open:${n}`),
     focusNext: (side) => fired.push('next:' + side),
     focusPrev: (side) => fired.push('prev:' + side),
+    pinchStart: (side) => fired.push('grab:' + side),
+    pinchMove: () => {},
+    pinchDrop: () => fired.push('drop'),
+    pinchCancel: () => fired.push('cancel'),
   };
 }
 
@@ -147,7 +160,7 @@ function run(frames, startAt = 10_000, handLabel = 'Right') {
   reset();
   let t = startAt;
   for (const f of frames) {
-    const lm = hand(f.ext).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
+    const lm = hand(f.ext, null, f.pinch === true).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
     classify({ landmarks: [lm], handedness: [[{ categoryName: handLabel, score: 0.98 }]] }, act, t);
     t += 1000 / DETECT_HZ;
   }
@@ -402,6 +415,64 @@ check(
   ),
   ['next:left', 'prev:left'],
 );
+
+// ---- pinch: grab a tab, preview, drop ---------------------------------------
+// A drop rearranges panels and rewrites the persisted layout, so these pin the two
+// rules that keep it deliberate: only an opened palm drops, and losing the hand
+// cancels instead.
+console.log('\npinch -> drag a tab between halves:');
+
+const PINCHED = { ext: [], pinch: true };
+const dragFrames = (n, total) => travel(n, total, []).map((f) => ({ ...f, pinch: true }));
+
+// A held pinch grabs from the hand's OWN side, once, after the brief hold.
+check('pinch grabs from the right hand side', run(rep(PINCH_HOLD_FRAMES + 6, PINCHED), 10_000, 'Right'), [
+  'grab:right',
+]);
+check('pinch grabs from the left hand side', run(rep(PINCH_HOLD_FRAMES + 6, PINCHED), 10_000, 'Left'), [
+  'grab:left',
+]);
+
+// A pinch shape flashing past on the way to another pose must not grab anything.
+// Frame count is a LITERAL, not PINCH_HOLD_FRAMES - 1: deriving it would scale the
+// input with any mutation and the case could never fail.
+// Verified non-vacuous: with PINCH_HOLD_FRAMES = 1 this returns ['grab:right'].
+check('brief pinch does not grab', run(rep(2, PINCHED), 10_000, 'Right'), []);
+
+// Grab, drag, then OPEN the palm -> exactly one drop.
+check(
+  'opening the palm drops once',
+  run([...rep(PINCH_HOLD_FRAMES + 2, PINCHED), ...dragFrames(6, 0.4), ...rep(6, { ext: OPEN })], 10_000, 'Right'),
+  ['grab:right', 'drop'],
+);
+
+// A drag must not leak into the swipe or finger-count paths. On real hands the
+// finger count flickers 0-1 while pinching, and 1 is a live gesture.
+check(
+  'a long drag fires no swipe and no panel count',
+  run([...rep(PINCH_HOLD_FRAMES + 2, PINCHED), ...dragFrames(30, 0.9)], 10_000, 'Right'),
+  ['grab:right'],
+);
+
+// THE SAFETY RULE: losing the hand mid-drag CANCELS, it never drops. A drop
+// rewrites the saved layout, so it must never happen because tracking blinked.
+// Verified non-vacuous: calling pinchDrop() on hand-loss makes this return 'drop'.
+{
+  const act = recorder();
+  reset();
+  let t = 10_000;
+  const feed = (lm) => {
+    classify(
+      { landmarks: lm ? [lm] : [], handedness: [[{ categoryName: 'Right', score: 0.98 }]] },
+      act,
+      t,
+    );
+    t += 1000 / DETECT_HZ;
+  };
+  for (let i = 0; i < PINCH_HOLD_FRAMES + 4; i++) feed(hand([], null, true));
+  for (let i = 0; i < 4; i++) feed(null); // tracking drops out mid-drag
+  check('losing the hand mid-drag cancels, never drops', act.fired, ['grab:right', 'cancel']);
+}
 
 console.log(failed ? `\n${failed} case(s) failed` : '\ngesture self-check passed');
 process.exit(failed ? 1 : 0);
