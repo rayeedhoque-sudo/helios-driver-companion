@@ -35,7 +35,18 @@ const MIN_CONFIDENCE = 0.6;
 // Speeds are per SECOND, not per frame, so retuning DETECT_HZ doesn't silently
 // change how fast a hand has to move. Frame counts are the exception and scale
 // with DETECT_HZ by design (they express "briefly", not "this fast").
-const SWIPE_ARM_FRAMES = 2; // palm held still this long to arm (~83 ms at 24 Hz)
+const SWIPE_ARM_FRAMES = 2; // palm held STILL this long to arm (~83 ms at 24 Hz)
+// ...or, for a palm that is ALREADY MOVING when it enters frame, this many frames of
+// a clear open palm instead (~250 ms at 24 Hz). Requested 2026-07-25: a swipe that
+// starts before the hand settles was being ignored entirely, because arming used to
+// demand stillness and a hand already in motion never provided it.
+//
+// TRADE-OFF, deliberate: this is the guard that used to reject an arm crossing the
+// frame — reaching past the laptop, a coach gesturing over it. Those now CAN fire a
+// swipe. Raise this, or restore the stillness-only rule, if false swipes show up at
+// an event. A brief pass-through is still rejected: it must look like an open palm
+// for the whole window.
+const SWIPE_ARM_MOVING_FRAMES = 6;
 const SWIPE_ARM_FINGERS = 4; // clear open palm needed to ARM a swipe...
 const SWIPE_HOLD_FINGERS = 2; // ...but only this many to KEEP one alive mid-sweep
 const SWIPE_STILL_SPEED = 0.25; // frame-widths/sec still counted as "holding steady"
@@ -123,7 +134,8 @@ let running = false;
 let lastFireAt = 0;
 let stableCount = 0;
 let stableFingers = -1;
-let palmFrames = 0;
+let palmFrames = 0; // consecutive open-palm frames, moving or not
+let palmStillFrames = 0; // ...of which consecutive STILL ones
 let lastX = 0; // previous wrist x, for the per-frame speed test
 let lastT = 0; // ...and its timestamp, so speed is per-second not per-frame
 let hasLast = false; // whether lastX/lastT hold a real previous sample
@@ -157,7 +169,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   if (!hand || hand.length < 21) {
     stableCount = 0;
     stableFingers = -1;
-    palmFrames = 0;
+    palmFrames = palmStillFrames = 0;
     hasLast = false;
     stillFrames = 0;
     lastDir = 0;
@@ -169,13 +181,19 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
 
   const fingers = extendedCount(hand);
   const x = 1 - hand[0].x; // mirrored, so hand-moves-right reads as "next"
-  const armed = palmFrames >= SWIPE_ARM_FRAMES;
+  // Armed either by a brief still hold, or — for a hand already in motion when it
+  // arrives — by simply looking like an open palm for longer. See the constants.
+  const armed = palmStillFrames >= SWIPE_ARM_FRAMES || palmFrames >= SWIPE_ARM_MOVING_FRAMES;
 
   // Wrist speed since the previous frame, per second so DETECT_HZ can be retuned
   // freely. Tracked for EVERY frame with a hand in it, not just palm frames, so the
   // pose test below can ask "is this hand moving?" before deciding what it is.
   const dt = Math.max(now - lastT, 1) / 1000;
-  const speed = hasLast ? Math.abs(x - lastX) / dt : Infinity;
+  // No previous sample means no motion has been OBSERVED yet, so report 0 rather
+  // than Infinity. Reporting Infinity made the first frame of every appearance count
+  // as "moving", which silently cost one frame of every still-hold and pushed arming
+  // past SWIPE_ARM_FRAMES.
+  const speed = hasLast ? Math.abs(x - lastX) / dt : 0;
   lastX = x;
   lastT = now;
   hasLast = true;
@@ -194,7 +212,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     // A fist is not a swipe pose and not a count pose — drop both.
     stableCount = 0;
     stableFingers = -1;
-    palmFrames = 0;
+    palmFrames = palmStillFrames = 0;
     trail = [];
 
     // One flick = one tab. After a stroke fires, keep the fist inert until it
@@ -244,12 +262,11 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     stableCount = 0;
     stableFingers = -1;
 
-    // Arm on a palm held STILL. Presence alone does not work — an arm crossing the
-    // frame (reaching past the laptop, a coach gesturing over it) stays open-handed
-    // the whole way and would accumulate enough trail to fire. Pausing first is what
-    // separates "swiped on purpose" from "passed through".
+    // Two ways in: a short STILL hold (deliberate, and the stricter of the two), or
+    // a longer run of open-palm frames for a hand that is already moving.
     if (!armed) {
-      palmFrames = moving ? 1 : palmFrames + 1;
+      palmFrames++;
+      palmStillFrames = moving ? 0 : palmStillFrames + 1;
       trail = [];
       return;
     }
@@ -279,7 +296,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     return;
   }
 
-  palmFrames = 0;
+  palmFrames = palmStillFrames = 0;
   lastDir = 0;
   trail = [];
 
@@ -368,7 +385,7 @@ export const __test = {
     lastFireAt = 0;
     stableCount = 0;
     stableFingers = -1;
-    palmFrames = 0;
+    palmFrames = palmStillFrames = 0;
     hasLast = false;
     stillFrames = 0;
     lastDir = 0;

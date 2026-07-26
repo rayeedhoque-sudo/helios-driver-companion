@@ -204,12 +204,19 @@ check('open palm swipe fires once', run([...armAt(), ...travel(5, SWIPE_DX + 0.0
 // Verified non-vacuous: with SWIPE_ARM_FRAMES = 0 this returns ['next'].
 check('fast sweep with no pose hold does not fire', run(travel(5, 0.9)), []);
 
-// The realistic version of the same hazard, and the case the stillness check exists
-// for: an arm crossing the frame over ~1 s is slow enough that a plain N-frame
-// arming delay would lapse and the trail still fill. Only requiring the palm to
-// PAUSE first rejects it.
-// Verified non-vacuous: with SWIPE_STILL_SPEED = 999 this returns ['next'].
-check('slow arm crossing the frame does not fire', run(travel(12, 0.9)), []);
+// A sustained open-palm crossing DOES now fire, and that is deliberate. Arming used
+// to demand stillness, which meant a swipe that started before the hand settled was
+// ignored entirely — the reported "already-moving hand isn't recognised". Allowing
+// SWIPE_ARM_MOVING_FRAMES of a moving palm to arm buys that back, and the cost is
+// exactly this case: an arm crossing the frame open-handed now reads as a swipe.
+// Documented rather than silently dropped, so the regression is visible if it
+// becomes a nuisance at an event. Restore the stillness-only rule to undo it.
+check('sustained open-palm crossing now DOES fire (accepted trade-off)', run(travel(12, 0.9)), ['next']);
+
+// The brief version is still rejected: SWIPE_ARM_MOVING_FRAMES means a hand has to
+// look like an open palm for a while, so a quick pass-through still does nothing.
+// Verified non-vacuous: with SWIPE_ARM_MOVING_FRAMES = 1 this returns ['next'].
+check('brief open-palm pass-through still does not fire', run(travel(5, 0.9)), []);
 
 // ---- reported on camera 2026-07-25: swipes were slow, one-shot, and dropped out --
 // Each case below is one of those complaints.
