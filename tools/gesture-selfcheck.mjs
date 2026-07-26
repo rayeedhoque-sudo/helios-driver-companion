@@ -48,7 +48,6 @@ const {
   SWIPE_WINDOW_MS,
   SWIPE_STILL_SPEED,
   SWIPE_REVERSE_LOCK_MS,
-  FIST_DX,
 } = mod.__test;
 
 // Build a 21-landmark hand, laid out like a real one seen palm-on with the fingers
@@ -136,8 +135,8 @@ function recorder() {
   return {
     fired,
     openNth: (n) => fired.push(`open:${n}`),
-    focusNext: () => fired.push('next'),
-    focusPrev: () => fired.push('prev'),
+    focusNext: (side) => fired.push('next:' + side),
+    focusPrev: (side) => fired.push('prev:' + side),
   };
 }
 
@@ -189,19 +188,19 @@ check(
   [],
 );
 
-// Open palm travelling right -> 'next'. `from` lets a stroke start where the last
+// Open palm travelling right -> 'next:right'. `from` lets a stroke start where the last
 // one ended, so return strokes can be modelled.
 const travel = (n, total, ext = OPEN, from = 0) =>
   Array.from({ length: n }, (_, i) => ({ ext, x: from - (total * i) / (n - 1) }));
 // Still frames at x, long enough to arm.
 const armAt = (x = 0) => rep(SWIPE_ARM_FRAMES, { ext: OPEN, x });
 
-check('open palm swipe fires once', run([...armAt(), ...travel(5, SWIPE_DX + 0.06)]), ['next']);
+check('open palm swipe fires once', run([...armAt(), ...travel(5, SWIPE_DX + 0.06)]), ['next:right']);
 
 // THE REGRESSION GUARD for the arming gate: a hand crossing the whole frame fast,
 // with no preceding pose hold — an arm reaching past the laptop, a coach gesturing
 // over it. It never holds still, so it never arms.
-// Verified non-vacuous: with SWIPE_ARM_FRAMES = 0 this returns ['next'].
+// Verified non-vacuous: with SWIPE_ARM_FRAMES = 0 this returns ['next:right'].
 check('fast sweep with no pose hold does not fire', run(travel(5, 0.9)), []);
 
 // A sustained open-palm crossing DOES now fire, and that is deliberate. Arming used
@@ -211,7 +210,7 @@ check('fast sweep with no pose hold does not fire', run(travel(5, 0.9)), []);
 // exactly this case: an arm crossing the frame open-handed now reads as a swipe.
 // Documented rather than silently dropped, so the regression is visible if it
 // becomes a nuisance at an event. Restore the stillness-only rule to undo it.
-check('sustained open-palm crossing now DOES fire (accepted trade-off)', run(travel(12, 0.9)), ['next', 'next']);
+check('sustained open-palm crossing now DOES fire (accepted trade-off)', run(travel(12, 0.9)), ['next:right', 'next:right']);
 
 // THE REAL GESTURE, measured on camera 2026-07-25 and replayed at the app's own
 // 24 Hz: a quick flick with NO still-hold, ~7 frames covering ~0.24 frame-widths.
@@ -219,11 +218,11 @@ check('sustained open-palm crossing now DOES fire (accepted trade-off)', run(tra
 // arming, this fired NOTHING at 24 Hz — arming ate ~250 ms of a ~300 ms stroke and
 // the remainder never reached SWIPE_DX. Two of the user's three real strokes were
 // being dropped.
-check('short quick flick with no still-hold fires exactly once', run(travel(7, 0.24)), ['next']);
+check('short quick flick with no still-hold fires exactly once', run(travel(7, 0.24)), ['next:right']);
 
 // The brief version is still rejected: SWIPE_ARM_MOVING_FRAMES means a hand has to
 // look like an open palm for a while, so a quick pass-through still does nothing.
-// Verified non-vacuous: with SWIPE_ARM_MOVING_FRAMES = 1 this returns ['next'].
+// Verified non-vacuous: with SWIPE_ARM_MOVING_FRAMES = 1 this returns ['next:right'].
 check('brief open-palm pass-through still does not fire', run(travel(5, 0.9)), []);
 
 // ---- reported on camera 2026-07-25: swipes were slow, one-shot, and dropped out --
@@ -233,9 +232,9 @@ check('brief open-palm pass-through still does not fire', run(travel(5, 0.9)), [
 // continuous sweep must keep advancing, not stop after the first tab.
 {
   const fired = run([...armAt(), ...travel(24, 1.0)]);
-  const ok = fired.length >= 2 && fired.every((f) => f === 'next');
+  const ok = fired.length >= 2 && fired.every((f) => f === 'next:right');
   try {
-    assert.ok(ok, `expected >=2 consecutive 'next', got [${fired}]`);
+    assert.ok(ok, `expected >=2 consecutive 'next:right', got [${fired}]`);
     console.log(`  ok   continuous sweep advances repeatedly -> [${fired}]`);
   } catch (err) {
     failed++;
@@ -249,11 +248,11 @@ check('brief open-palm pass-through still does not fire', run(travel(5, 0.9)), [
 // SWIPE_REPEAT_MS and actually reaches the reverse lock — a snappier return is
 // swallowed by the repeat gate and would test nothing. Frame count is a literal,
 // not derived from either constant.
-// Verified non-vacuous: with SWIPE_REVERSE_LOCK_MS = 0 this returns ['next','prev'].
+// Verified non-vacuous: with SWIPE_REVERSE_LOCK_MS = 0 this returns ['next:right','prev:right'].
 check(
   'return stroke does not undo the swipe',
   run([...armAt(), ...travel(5, SWIPE_DX + 0.06), ...travel(10, -(SWIPE_DX + 0.06), OPEN, -(SWIPE_DX + 0.06))]),
-  ['next'],
+  ['next:right'],
 );
 
 // "a slight sweep motion which overlaps fingers and doesnt make all 5 visible".
@@ -261,12 +260,12 @@ check(
 check(
   'swipe survives fingers merging mid-sweep',
   run([...armAt(), ...travel(5, SWIPE_DX + 0.06, ['index', 'middle'])]),
-  ['next'],
+  ['next:right'],
 );
 
 // "i should be able to swipe fast while still getting recognized". A sweep over
 // only SWIPE_MIN_SAMPLES frames must still register.
-check('fast two-sample swipe registers', run([...armAt(), ...travel(2, SWIPE_DX + 0.06)]), ['next']);
+check('fast two-sample swipe registers', run([...armAt(), ...travel(2, SWIPE_DX + 0.06)]), ['next:right']);
 
 // A deliberate reversal after the lock expires is still a real gesture.
 {
@@ -279,7 +278,7 @@ check('fast two-sample swipe registers', run([...armAt(), ...travel(2, SWIPE_DX 
       ...rep(pause, { ext: OPEN, x: -(SWIPE_DX + 0.06) }),
       ...travel(5, -(SWIPE_DX + 0.06), OPEN, -(SWIPE_DX + 0.06)),
     ]),
-    ['next', 'prev'],
+    ['next:right', 'prev:right'],
   );
 }
 
@@ -298,7 +297,7 @@ check(
 // "less time between breaks of movement" — an ordinary pause between two swipes
 // must NOT disarm the hand. 12 frames (~500 ms) is a normal beat between strokes;
 // the second swipe has to land without a fresh still-hold. Literal count.
-// Verified non-vacuous: with SWIPE_IDLE_DISARM_FRAMES = 8 this returns ['next'].
+// Verified non-vacuous: with SWIPE_IDLE_DISARM_FRAMES = 8 this returns ['next:right'].
 check(
   'a pause between swipes does not disarm',
   run([
@@ -307,16 +306,16 @@ check(
     ...rep(12, { ext: OPEN, x: -(SWIPE_DX + 0.04) }),
     ...travel(4, SWIPE_DX + 0.04, OPEN, -(SWIPE_DX + 0.04)),
   ]),
-  ['next', 'next'],
+  ['next:right', 'next:right'],
 );
 
 // "multiple tabs in one swipe if it is far enough" — a full-width sweep should
 // advance several tabs, not one.
 {
   const fired = run([...armAt(), ...travel(20, 0.85)]);
-  const ok = fired.length >= 3 && fired.every((f) => f === 'next');
+  const ok = fired.length >= 3 && fired.every((f) => f === 'next:right');
   try {
-    assert.ok(ok, `expected >=3 consecutive 'next', got [${fired}]`);
+    assert.ok(ok, `expected >=3 consecutive 'next:right', got [${fired}]`);
     console.log(`  ok   long sweep advances several tabs -> [${fired}]`);
   } catch (err) {
     failed++;
@@ -367,63 +366,42 @@ check(
   check('hand leaving frame resets dwell', act.fired, []);
 }
 
-// ---- fist path: exactly one tab per stroke -----------------------------------
-// Direction is HAND-RELATIVE. All four hand x direction combinations are covered
-// because a flipped handedness label would silently swap the two gestures and only
-// half the table would notice. Measured on the real camera 2026-07-25: a right hand
-// moving left reports "Right", a left hand moving right reports "Left".
-console.log('\nfist -> one tab (hand-relative direction):');
+// ---- which half of a split dock a swipe drives -------------------------------
+// From WHICH HAND, not from direction: left hand owns the left half, right hand the
+// right half. Both directions are covered for both hands, because getting the side
+// right for one direction and wrong for the other would still pass a narrower test.
+console.log('\nhand -> side of a split dock:');
 
-const FIST = []; // no digits extended
-// A fist stroke: `dir` +1 travels to YOUR right, -1 to your left. run() mirrors x,
-// so a move to your right is a DECREASING raw x.
-const fistStroke = (dir) => travel(4, dir * (FIST_DX + 0.05), FIST);
-
-for (const [hand, dir, want, label] of [
-  ['Right', +1, 'next', 'right hand, outward (to your right)'],
-  ['Right', -1, 'prev', 'right hand, inward (across your body)'],
-  ['Left', -1, 'next', 'left hand, outward (to your left)'],
-  ['Left', +1, 'prev', 'left hand, inward (across your body)'],
+for (const [hand, dir, want] of [
+  ['Right', +1, 'next:right'],
+  ['Right', -1, 'prev:right'],
+  ['Left', +1, 'next:left'],
+  ['Left', -1, 'prev:left'],
 ]) {
-  check(`fist ${label} -> ${want}`, run(fistStroke(dir), 10_000, hand), [want]);
+  check(
+    `${hand.toLowerCase()} hand swiping ${dir > 0 ? 'right' : 'left'} -> ${want}`,
+    run([...armAt(), ...travel(5, dir * (SWIPE_DX + 0.06))], 10_000, hand),
+    [want],
+  );
 }
 
-// One flick = ONE tab. A long continuous fist drag must still move a single tab,
-// which is the whole point of this gesture existing alongside the multi-tab sweep.
-// Verified non-vacuous: without the fistSpent re-arm gate this returns ['next','next'].
-check('long fist drag still moves only one tab', run(travel(20, 0.8, FIST), 10_000, 'Right'), ['next']);
-
-// ...but two deliberate strokes with a pause between them move two tabs.
+// The side must not depend on travel direction — a hand keeps its own half whichever
+// way it sweeps. Verified non-vacuous: deriving `side` from dx instead of handedness
+// makes two of the four cases above fail.
 check(
-  'two fist strokes with a pause move two tabs',
+  'one hand sweeping both ways stays on its own side',
   run(
     [
-      ...travel(4, FIST_DX + 0.05, FIST),
-      ...rep(20, { ext: FIST, x: -(FIST_DX + 0.05) }),
-      ...travel(4, FIST_DX + 0.05, FIST, -(FIST_DX + 0.05)),
+      ...armAt(),
+      ...travel(5, SWIPE_DX + 0.06),
+      ...rep(20, { ext: OPEN, x: -(SWIPE_DX + 0.06) }),
+      ...travel(5, -(SWIPE_DX + 0.06), OPEN, -(SWIPE_DX + 0.06)),
     ],
     10_000,
-    'Right',
+    'Left',
   ),
-  ['next', 'next'],
+  ['next:left', 'prev:left'],
 );
-
-// A fist held still does nothing — it must not fire on presence alone.
-check('fist held still does nothing', run(rep(20, { ext: FIST }), 10_000, 'Right'), []);
-
-// A fist travelling less than FIST_DX is not a stroke.
-check('fist moved too little does nothing', run(travel(6, FIST_DX * 0.5, FIST), 10_000, 'Right'), []);
-
-// The fist path must not disturb the open-palm swipe, which was left untouched.
-check(
-  'open-palm swipe still works after the fist addition',
-  run([...armAt(), ...travel(5, SWIPE_DX + 0.06)]),
-  ['next'],
-);
-
-// A fist is not a count pose: 0 extended fingers must never open a panel, even held
-// well past the dwell. This is the "a fist opened Limelight" regression.
-check('fist never fires a panel count', run(rep(DWELL_FRAMES + 10, { ext: FIST }), 10_000, 'Right'), []);
 
 console.log(failed ? `\n${failed} case(s) failed` : '\ngesture self-check passed');
 process.exit(failed ? 1 : 0);

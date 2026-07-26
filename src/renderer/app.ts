@@ -15,6 +15,7 @@ import {
   type GroupPanelPartInitParameters,
   type IContentRenderer,
   type SerializedDockview,
+  type DockviewGroupPanel,
 } from 'dockview-core';
 import { initStore, getSettings, updateSettings, onSettings, type Settings } from './store';
 import { PANELS, getPanelDef } from './panels-registry';
@@ -106,6 +107,38 @@ function defaultLayout(api: DockviewApi): void {
   api.getPanel('limelight')?.api.setActive();
 }
 
+// Pick the dock group that belongs to one side of the screen. Groups are ordered by
+// their on-screen x, so 'left' is the leftmost and 'right' the rightmost.
+//
+// Sized for a TWO-way split, which is the only arrangement gestures are meant to
+// drive. With a single group both sides resolve to it, so gestures still work
+// un-split. With three or more the middle groups are simply unreachable by gesture
+// (the mouse and "+ Panels" still reach them) — deliberately not solved, because a
+// 3-way split has no natural left/right mapping to two hands.
+function groupForSide(api: DockviewApi, side: 'left' | 'right'): DockviewGroupPanel | undefined {
+  const groups = api.groups
+    .slice()
+    .sort((a, b) => a.element.getBoundingClientRect().left - b.element.getBoundingClientRect().left);
+  if (groups.length === 0) return undefined;
+  return side === 'left' ? groups[0] : groups[groups.length - 1];
+}
+
+// Step the active tab WITHIN one side's group, wrapping inside that group only.
+// This is what stops a gesture crossing between the two halves: it never touches
+// api.moveToNext, which walks the whole dock regardless of groups.
+function cycleSide(api: DockviewApi, side: 'left' | 'right', step: 1 | -1): void {
+  const group = groupForSide(api, side);
+  if (!group) return;
+  const panels = group.panels;
+  if (panels.length === 0) return;
+  const current = group.activePanel;
+  const i = current ? panels.indexOf(current) : 0;
+  // Wrap within the group. Modulo is written the long way because JS % keeps the
+  // sign of the dividend, so a step of -1 at index 0 would otherwise go negative.
+  const next = panels[(((i + step) % panels.length) + panels.length) % panels.length];
+  next?.api.setActive();
+}
+
 function restoreLayout(api: DockviewApi): void {
   const saved = getSettings().layout;
   if (saved) {
@@ -182,9 +215,14 @@ function wireGestures(api: DockviewApi): void {
       const def = PANELS[n - 1];
       if (def) openPanel(api, def.id);
     },
-    focusNext: () => api.moveToNext({ includePanel: true }),
-    focusPrev: () => api.moveToPrevious({ includePanel: true }),
+    // Side-scoped: a gesture only ever cycles the half its hand owns.
+    focusNext: (side) => cycleSide(api, side, 1),
+    focusPrev: (side) => cycleSide(api, side, -1),
   };
+
+  // Debug/verification hook, same precedent as __dock above: the side-isolation
+  // rule can only be exercised against a real split dock, not the unit harness.
+  (window as Window & { __gestureActions?: GestureActions }).__gestureActions = actions;
 
   onGestureStatus((text, kind) => {
     badge.textContent = text;
