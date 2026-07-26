@@ -34,6 +34,12 @@ const COOLDOWN_MS = 900; // ignore everything right after a fire, so one gesture
 const SWIPE_DX = 0.22; // normalized wrist travel across the frame that counts as a swipe
 const SWIPE_WINDOW_MS = 600; // ...within this long
 const MIN_CONFIDENCE = 0.6;
+// How far past its middle joint a finger must reach to count as extended. Raise if
+// half-curled fingers register; lower if fully-extended ones are missed.
+const FINGER_MARGIN = 1.08;
+// Same idea for the thumb's sideways test. Separate knob because it's a different
+// measurement (see extendedCount) and wants tuning independently.
+const THUMB_MARGIN = 1.05;
 
 // ---- geometry ----------------------------------------------------------------
 type Pt = { x: number; y: number; z: number };
@@ -45,10 +51,17 @@ function dist(a: Pt, b: Pt): number {
 // A finger is "extended" when its tip sits further from the wrist than its middle
 // joint does. Crude but orientation-independent, which matters because the driver
 // laptop sits at whatever angle it sits at.
+//
+// The thumb needs a different test and must NOT be added to the list below. It does
+// not curl toward the wrist like the fingers — it folds ACROSS the palm, so even in
+// a closed fist the thumb tip stays further from the wrist than its own base joint.
+// Under the radial test it therefore reads "extended" in every pose, which counted
+// every gesture one too high (a fist opened panel 1; thumb-tucked-index-out opened
+// panel 2). Measured on-camera 2026-07-25. Judge it sideways instead: an extended
+// thumb points away from the pinky, a tucked one lies across the palm toward it.
 function extendedCount(lm: Pt[]): number {
   const wrist = lm[0];
   const pairs: [number, number][] = [
-    [4, 2], // thumb
     [8, 6], // index
     [12, 10], // middle
     [16, 14], // ring
@@ -56,8 +69,10 @@ function extendedCount(lm: Pt[]): number {
   ];
   let n = 0;
   for (const [tip, joint] of pairs) {
-    if (dist(lm[tip], wrist) > dist(lm[joint], wrist) * 1.08) n++;
+    if (dist(lm[tip], wrist) > dist(lm[joint], wrist) * FINGER_MARGIN) n++;
   }
+  // Thumb: tip (4) vs its own IP joint (3), both measured against the pinky MCP (17).
+  if (dist(lm[4], lm[17]) > dist(lm[3], lm[17]) * THUMB_MARGIN) n++;
   return n;
 }
 

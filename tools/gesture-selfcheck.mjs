@@ -5,9 +5,10 @@
 // esbuild -> node, stubbing @mediapipe/tasks-vision, which is only touched inside
 // functions this check never calls) and asserts it counts synthetic hands correctly.
 //
-// This is the guard behind the 1.08 margin in extendedCount: that margin is what
-// stops a half-curled finger from registering. Drop it and the "marginal finger"
-// case below fails, which on the robot means gestures firing at random.
+// Two layers: extendedCount() against static poses, then classify() against
+// synthetic frame sequences (dwell, cooldown, swipe arming) with a stubbed action
+// sink. Every guard here has been mutation-checked — flipping the constant it
+// protects makes its case fail — so none of them are vacuous.
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -38,45 +39,71 @@ const res = await build({
 const mod = await import(`data:text/javascript;base64,${Buffer.from(res.outputFiles[0].text).toString('base64')}`);
 const { extendedCount, classify, reset, DWELL_FRAMES, SWIPE_ARM_FRAMES, COOLDOWN_MS, SWIPE_DX } = mod.__test;
 
-// Build a 21-landmark hand. `reach` maps finger name -> tip distance from the wrist;
-// the middle joint always sits at 0.10. Extended fingers reach past it, curled ones
-// fall short. Everything is a straight line out of the wrist — orientation doesn't
-// matter to extendedCount, only radial distance does.
-const JOINT = { thumb: 2, index: 6, middle: 10, ring: 14, pinky: 18 };
-const TIP = { thumb: 4, index: 8, middle: 12, ring: 16, pinky: 20 };
-const JOINT_R = 0.1;
+// Build a 21-landmark hand, laid out like a real one seen palm-on with the fingers
+// pointing up. Landmark ids are MediaPipe's.
+//
+// The thumb is modelled SEPARATELY and faithfully, and that matters: an earlier
+// version of this file fanned all five digits radially out of the wrist and let a
+// "curled" thumb fall short like a finger. Real thumbs don't do that — they fold
+// ACROSS the palm, ending up further from the wrist than their own base joint. That
+// unfaithful model is why this check passed while a real fist opened panel 1 on
+// camera. Keep the tucked thumb tip up-and-across (not short), or the check goes
+// blind to the exact bug it now guards.
+const wrist = { x: 0.5, y: 0.9, z: 0 };
+const MCP = { index: 5, middle: 9, ring: 13, pinky: 17 };
+const PIP = { index: 6, middle: 10, ring: 14, pinky: 18 };
+const TIP = { index: 8, middle: 12, ring: 16, pinky: 20 };
+const COL = { index: 0.46, middle: 0.5, ring: 0.54, pinky: 0.58 };
+const P = (x, y) => ({ x, y, z: 0 });
 
-function hand(reach) {
-  const wrist = { x: 0.5, y: 0.9, z: 0 };
+// ext: array of digit names that are extended. marginal: one finger placed just
+// barely past its PIP — half-curled, must NOT count.
+function hand(ext = [], marginal = null) {
   const lm = Array.from({ length: 21 }, () => ({ ...wrist }));
-  let i = 0;
-  for (const f of Object.keys(JOINT)) {
-    // Fan the fingers out so no two share a point; angle is irrelevant to the math.
-    const a = -Math.PI / 2 + (i - 2) * 0.2;
-    i++;
-    const at = (r) => ({ x: wrist.x + Math.cos(a) * r, y: wrist.y + Math.sin(a) * r, z: 0 });
-    lm[JOINT[f]] = at(JOINT_R);
-    lm[TIP[f]] = at(reach[f] ?? 0.04); // default: curled
+  lm[0] = { ...wrist };
+
+  for (const f of Object.keys(MCP)) {
+    const x = COL[f];
+    lm[MCP[f]] = P(x, 0.8);
+    lm[PIP[f]] = P(x, 0.72);
+    if (f === marginal) {
+      // Tip only 3% further from the wrist than the PIP — inside FINGER_MARGIN.
+      const pip = lm[PIP[f]];
+      lm[TIP[f]] = P(wrist.x + (pip.x - wrist.x) * 1.03, wrist.y + (pip.y - wrist.y) * 1.03);
+    } else {
+      lm[TIP[f]] = P(x, ext.includes(f) ? 0.62 : 0.78); // 0.78 = curled back to the palm
+    }
   }
+
+  // Thumb chain on the far side from the pinky.
+  lm[1] = P(0.44, 0.86);
+  lm[2] = P(0.4, 0.82);
+  lm[3] = P(0.37, 0.78);
+  // Extended: out to the side, away from the pinky MCP.
+  // Tucked: folded up across the palm — FURTHER from the wrist than joint 2, which
+  // is precisely what fooled the old radial test.
+  lm[4] = ext.includes('thumb') ? P(0.33, 0.74) : P(0.48, 0.74);
   return lm;
 }
 
-const EXT = 0.2; // comfortably extended
 const cases = [
-  ['fist', {}, 0],
-  ['index only', { index: EXT }, 1],
-  ['peace sign', { index: EXT, middle: EXT }, 2],
-  ['three fingers', { index: EXT, middle: EXT, ring: EXT }, 3],
-  ['open palm', { thumb: EXT, index: EXT, middle: EXT, ring: EXT, pinky: EXT }, 5],
-  ['four fingers (swipe pose)', { index: EXT, middle: EXT, ring: EXT, pinky: EXT }, 4],
-  // The margin guard: a finger only 5% past its joint is half-curled, not extended.
-  // Without the 1.08 factor this would count as 1 and gestures would self-trigger.
-  ['marginal finger', { index: JOINT_R * 1.05 }, 0],
+  // --- the on-camera regressions (2026-07-25): every count read one too high ---
+  ['fist, thumb tucked', [], null, 0],
+  ['thumb tucked + index out', ['index'], null, 1],
+  // --- the rest of the vocabulary ---
+  ['thumb out only', ['thumb'], null, 1],
+  ['peace sign', ['index', 'middle'], null, 2],
+  ['three fingers', ['index', 'middle', 'ring'], null, 3],
+  ['four fingers, thumb tucked (swipe pose)', ['index', 'middle', 'ring', 'pinky'], null, 4],
+  ['open palm, all five', ['thumb', 'index', 'middle', 'ring', 'pinky'], null, 5],
+  // The margin guard: a finger only 3% past its joint is half-curled, not extended.
+  // Without FINGER_MARGIN this counts as 1 and gestures self-trigger.
+  ['marginal half-curled finger', [], 'index', 0],
 ];
 
 let failed = 0;
-for (const [name, reach, want] of cases) {
-  const got = extendedCount(hand(reach));
+for (const [name, ext, marginal, want] of cases) {
+  const got = extendedCount(hand(ext, marginal));
   try {
     assert.equal(got, want, `${name}: expected ${want} extended, got ${got}`);
     console.log(`  ok   ${name} -> ${got}`);
@@ -90,7 +117,7 @@ for (const [name, reach, want] of cases) {
 // Drives synthetic frame sequences through the real classifier with a stubbed
 // action sink and an explicit clock, so dwell / cooldown / swipe-arming are pinned.
 // None of this is reachable by a live camera test.
-const OPEN = { thumb: EXT, index: EXT, middle: EXT, ring: EXT, pinky: EXT };
+const OPEN = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 
 function recorder() {
   const fired = [];
@@ -102,14 +129,14 @@ function recorder() {
   };
 }
 
-// Feed `frames` (each: {reach, x}) at 1/DETECT_HZ intervals. x shifts the whole hand
+// Feed `frames` (each: {ext, x}) at 1/DETECT_HZ intervals. x shifts the whole hand
 // horizontally to simulate travel; MediaPipe x is normalized and gestures.ts mirrors it.
 function run(frames, startAt = 10_000) {
   const act = recorder();
   reset();
   let t = startAt;
   for (const f of frames) {
-    const lm = hand(f.reach).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
+    const lm = hand(f.ext).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
     classify({ landmarks: [lm] }, act, t);
     t += 1000 / 12; // DETECT_HZ
   }
@@ -133,26 +160,26 @@ console.log('\nclassify() — dwell, cooldown, swipe arming:');
 // A count held past DWELL_FRAMES fires exactly once, not once per frame.
 check(
   'two fingers held fires once',
-  run(rep(DWELL_FRAMES + 6, { reach: { index: EXT, middle: EXT } })),
+  run(rep(DWELL_FRAMES + 6, { ext: ['index','middle'] })),
   ['open:2'],
 );
 
 // Held below the dwell threshold: nothing. This is the flicker guard.
-check('two fingers held briefly does nothing', run(rep(DWELL_FRAMES - 1, { reach: { index: EXT, middle: EXT } })), []);
+check('two fingers held briefly does nothing', run(rep(DWELL_FRAMES - 1, { ext: ['index','middle'] })), []);
 
 // Changing the count restarts the dwell — a hand in transit must not fire.
 check(
   'count changing mid-dwell does not fire',
   run([
-    ...rep(DWELL_FRAMES - 1, { reach: { index: EXT } }),
-    ...rep(DWELL_FRAMES - 1, { reach: { index: EXT, middle: EXT } }),
+    ...rep(DWELL_FRAMES - 1, { ext: ['index'] }),
+    ...rep(DWELL_FRAMES - 1, { ext: ['index','middle'] }),
   ]),
   [],
 );
 
 // Open palm travelling right -> exactly one 'next', despite many qualifying frames.
-const travel = (n, total) => Array.from({ length: n }, (_, i) => ({ reach: OPEN, x: -(total * i) / (n - 1) }));
-check('open palm swipe fires once', run([...rep(SWIPE_ARM_FRAMES, { reach: OPEN }), ...travel(5, SWIPE_DX + 0.06)]), [
+const travel = (n, total) => Array.from({ length: n }, (_, i) => ({ ext: OPEN, x: -(total * i) / (n - 1) }));
+check('open palm swipe fires once', run([...rep(SWIPE_ARM_FRAMES, { ext: OPEN }), ...travel(5, SWIPE_DX + 0.06)]), [
   'next',
 ]);
 
@@ -175,8 +202,8 @@ check('slow arm crossing the frame does not fire', run(travel(12, 0.9)), []);
 check(
   'cooldown swallows an immediate second gesture',
   run([
-    ...rep(DWELL_FRAMES, { reach: { index: EXT } }),
-    ...rep(DWELL_FRAMES + 2, { reach: { index: EXT, middle: EXT } }),
+    ...rep(DWELL_FRAMES, { ext: ['index'] }),
+    ...rep(DWELL_FRAMES + 2, { ext: ['index','middle'] }),
   ]),
   ['open:1'],
 );
@@ -190,9 +217,9 @@ check(
     classify({ landmarks: lm ? [lm] : [] }, act, t);
     t += 1000 / 12;
   };
-  for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand({ index: EXT }));
+  for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand(['index']));
   feed(null); // hand leaves frame
-  for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand({ index: EXT }));
+  for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand(['index']));
   check('hand leaving frame resets dwell', act.fired, []);
 }
 
