@@ -1,6 +1,6 @@
 // Main process: window, settings persistence, DS-dock wiring, IPC.
 // Settings file I/O and IPC channel names are FROZEN (see ARCHITECTURE.md).
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import type { Settings, Station } from '../renderer/store';
@@ -37,6 +37,12 @@ app.on('second-instance', () => {
     mainWindow.focus();
   }
 });
+
+// No application menu. Electron installs a default File/Edit/View/Window/Help bar
+// on Windows, which costs a strip of vertical space on a dashboard that has none to
+// spare and puts an Alt-activated menu in front of a driver mid-match. It also binds
+// accelerators (Ctrl+W closes the window, Ctrl+R reloads) that are hostile here.
+Menu.setApplicationMenu(null);
 
 const DEFAULTS: Settings = {
   ntHost: '10.97.4.2',
@@ -107,6 +113,7 @@ function createWindow(): void {
     minHeight: 900,
     backgroundColor: '#0b0812',
     show: false,
+    autoHideMenuBar: true, // belt and braces: no menu strip, and Alt cannot summon one
     // build.mjs copies assets/ into dist/assets/ alongside this file (dist/main.cjs),
     // so __dirname-relative resolves the same in dev and packaged layouts.
     icon: path.join(__dirname, 'assets', 'icon.ico'),

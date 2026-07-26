@@ -77,6 +77,7 @@ koffi.proto('bool EnumWindowsProc(intptr_t hwnd, intptr_t lparam)');
 
 const EnumWindows = user32.func('bool EnumWindows(EnumWindowsProc* cb, intptr_t lparam)');
 const GetWindowTextW = user32.func('int GetWindowTextW(intptr_t hwnd, _Out_ uint16_t* buf, int max)');
+const GetClassNameW = user32.func('int GetClassNameW(intptr_t hwnd, _Out_ uint16_t* buf, int max)');
 const IsWindow = user32.func('bool IsWindow(intptr_t hwnd)');
 const IsWindowVisible = user32.func('bool IsWindowVisible(intptr_t hwnd)');
 const IsIconic = user32.func('bool IsIconic(intptr_t hwnd)');
@@ -223,22 +224,57 @@ function ensureTimers(): void {
 }
 
 // --- find DS (2 s scan while not found) -------------------------------------------
+// The title fragment ALONE is not enough to identify the DS. Windows' taskbar
+// creates a shell window literally titled "Jump List for FRC Driver Station" when
+// the DS has been right-clicked or pinned, and it matches the fragment just as well.
+// The old code stopped enumerating at the first title match, so whenever that shell
+// window existed it won, dsHwnd pointed at a jump list, and docking silently did
+// nothing. It only appears sometimes, which is why the breakage looked spontaneous.
+// Observed on this machine 2026-07-26: real DS hwnd class "LVDChild", owned by
+// DriverStation.exe; the jump-list window is a shell class.
+//
+// So: enumerate ALL matches and prefer a LabVIEW-class window. The DS is a LabVIEW
+// application, and every LabVIEW top-level class starts "LV". Falls back to a
+// non-shell match if a future DS build renames its class, rather than finding
+// nothing at all.
+const DS_CLASS_PREFIX = 'LV';
+const SHELL_CLASS_HINTS = ['Jump', 'DV2ControlHost', 'Windows.UI.Core', 'Shell_', 'ToolbarWindow'];
+
 function findDsWindow(): { hwnd: number; title: string } | null {
-  let hit: { hwnd: number; title: string } | null = null;
+  const matches: { hwnd: number; title: string; cls: string }[] = [];
   const buf = Buffer.alloc(1024);
+  const cbuf = Buffer.alloc(1024);
   EnumWindows((hwnd: number) => {
     if (hwnd === appHwnd || !IsWindowVisible(hwnd)) return true;
     const len = GetWindowTextW(hwnd, buf, 512) as number;
     if (len > 0) {
       const title = buf.toString('utf16le', 0, len * 2);
       if (title.includes(DS_TITLE_FRAGMENT)) {
-        hit = { hwnd, title };
-        return false; // stop enumerating
+        const clen = GetClassNameW(hwnd, cbuf, 512) as number;
+        matches.push({ hwnd, title, cls: clen > 0 ? cbuf.toString('utf16le', 0, clen * 2) : '' });
       }
     }
-    return true;
+    return true; // keep going — the first match is not necessarily the DS
   }, 0);
-  return hit;
+  if (matches.length === 0) return null;
+
+  const real =
+    matches.find((m) => m.cls.startsWith(DS_CLASS_PREFIX)) ??
+    matches.find((m) => !SHELL_CLASS_HINTS.some((h) => m.cls.includes(h) || m.title.startsWith('Jump List')));
+  if (!real) {
+    console.log(
+      `[dsdock] ${matches.length} title match(es) but all look like shell windows: ` +
+        matches.map((m) => `"${m.title}" (${m.cls})`).join(', '),
+    );
+    return null;
+  }
+  if (matches.length > 1) {
+    console.log(
+      `[dsdock] ${matches.length} title matches, chose class "${real.cls}" over ` +
+        matches.filter((m) => m !== real).map((m) => `"${m.cls}"`).join(', '),
+    );
+  }
+  return { hwnd: real.hwnd, title: real.title };
 }
 
 function scanTick(): void {
