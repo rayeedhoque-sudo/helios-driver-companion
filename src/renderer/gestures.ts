@@ -123,13 +123,22 @@ const SWIPE_MERGE_GRACE_FRAMES = 8;
 // Pinch and fist OVERLAP on ratio alone, so one threshold cannot separate them with
 // any margin (0.25 leaves 3%). Starting a grab therefore needs BOTH tests, and a
 // fist fails both — it would take two independent drifts to false-trigger:
-//   ratio  < PINCH_ON        fist min 0.258 vs 0.25
-//   vsMid  > PINCH_VS_MIDDLE fist max 1.471 vs 1.50
-// vsMid is thumb-to-index over thumb-to-middle: high when the thumb has singled out
-// the index finger, ~1.3 when it lies across a closed fist, <1.1 on an open palm.
-// A held pinch satisfies both for 209 consecutive frames, against 3 required.
+//   ratio     < PINCH_ON          fist min 0.258 vs 0.25   (3.4% margin)
+//   indexReach > PINCH_INDEX_REACH fist max 0.853 vs 0.88  (3.0% margin)
+//
+// indexReach is the index TIP's distance from the wrist over the palm's own size.
+// In a pinch the index reaches forward to meet the thumb (0.79-1.25, p50 1.00); in a
+// fist it is curled back against the palm (0.79-0.85); on an open palm it is far out
+// (1.40-2.15). Measured on this camera.
+//
+// The first attempt used thumb-to-index over thumb-to-MIDDLE instead, which is a
+// ratio of two distances that are BOTH near zero during a pinch — numerically
+// unstable, and it rejected a third of real pinch frames, which is what "the pinch
+// recognition got worse" was. indexReach divides by the palm span instead, so both
+// terms stay well-conditioned: 97.2% of held-pinch frames now qualify, against 67.5%
+// before, with the fist still blocked twice over.
 const PINCH_ON = 0.25; // thumb-index over palm span, below this = pinching
-const PINCH_VS_MIDDLE = 1.5; // ...and the thumb must be singling out the INDEX, not fisted
+const PINCH_INDEX_REACH = 0.88; // ...and the index must be REACHING, not curled into a fist
 const PINCH_OFF = 0.6; // release. Above held-pinch max 0.44, below palm min 0.76.
 const PINCH_HOLD_FRAMES = 3; // frames before a pinch counts as a deliberate grab
 
@@ -187,12 +196,13 @@ function pinchRatio(lm: Pt[]): number {
   return span > 0 ? dist(lm[4], lm[8]) / span : Infinity;
 }
 
-// Is the thumb singling out the INDEX finger, or just lying across a closed hand?
-// Thumb-to-index over thumb-to-middle: high for a real pinch, ~1.3 for a fist, <1.1
-// for an open palm. This is what keeps a fist out of the pinch path — see PINCH_ON.
-function pinchVsMiddle(lm: Pt[]): number {
-  const toMiddle = dist(lm[4], lm[12]);
-  return toMiddle > 0 ? dist(lm[4], lm[8]) / toMiddle : 0;
+// Is the index finger REACHING forward, or curled into a fist? Index tip's distance
+// from the wrist over the palm's own size. This is what keeps a fist out of the
+// pinch path — see PINCH_ON. Both terms are palm-scale, so unlike a thumb-to-index
+// over thumb-to-middle ratio it stays well-conditioned when the fingertips bunch up.
+function pinchIndexReach(lm: Pt[]): number {
+  const span = dist(lm[0], lm[9]);
+  return span > 0 ? dist(lm[0], lm[8]) / span : 0;
 }
 
 // ---- runtime -----------------------------------------------------------------
@@ -303,7 +313,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     return;
   }
 
-  if (pinch < PINCH_ON && pinchVsMiddle(hand) > PINCH_VS_MIDDLE) {
+  if (pinch < PINCH_ON && pinchIndexReach(hand) > PINCH_INDEX_REACH) {
     // Brief hold before committing, so a hand passing through a pinch-like shape on
     // its way to some other pose doesn't grab a tab.
     pinchFrames++;
@@ -509,9 +519,9 @@ export const __test = {
   SWIPE_REVERSE_LOCK_MS,
   SWIPE_MERGE_GRACE_FRAMES,
   PINCH_ON,
-  PINCH_VS_MIDDLE,
+  PINCH_INDEX_REACH,
   PINCH_OFF,
   PINCH_HOLD_FRAMES,
   pinchRatio,
-  pinchVsMiddle,
+  pinchIndexReach,
 };
