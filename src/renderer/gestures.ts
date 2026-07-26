@@ -296,7 +296,21 @@ function tick(actions: GestureActions): void {
 export async function startGestures(actions: GestureActions, preview: HTMLVideoElement): Promise<void> {
   if (running) return;
   onStatus('starting...', 'idle');
-  stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+  // Ask for the camera's full 16:9 frame. Requesting 640x480 got a 4:3 stream that
+  // is a horizontal CROP of the sensor, not a squeeze — measured 2026-07-25 by
+  // capturing the same scene at both settings: objects at the left and right edges
+  // of the 1280x720 frame are simply absent from the 640x480 one. That threw away
+  // ~25% of the width, which is the room a sideways swipe needs, and is very likely
+  // why the hand kept leaving frame.
+  //
+  // Costs almost nothing: MediaPipe downscales to its own model input before
+  // inference, so measured p50 was 7.9 ms at 720p vs 8.2 ms at 480p (p90 10.6 vs
+  // 9.9) — about a quarter of the 41.7 ms budget at DETECT_HZ 24.
+  //
+  // `ideal` rather than exact, so a camera without 720p degrades instead of failing.
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+  });
   video = preview;
   video.srcObject = stream;
   await video.play();
