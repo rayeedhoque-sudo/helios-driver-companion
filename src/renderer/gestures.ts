@@ -35,16 +35,28 @@ const MIN_CONFIDENCE = 0.6;
 // Speeds are per SECOND, not per frame, so retuning DETECT_HZ doesn't silently
 // change how fast a hand has to move. Frame counts are the exception and scale
 // with DETECT_HZ by design (they express "briefly", not "this fast").
-const SWIPE_ARM_FRAMES = 3; // palm held still this long to arm (~125 ms at 24 Hz)
+const SWIPE_ARM_FRAMES = 2; // palm held still this long to arm (~83 ms at 24 Hz)
 const SWIPE_ARM_FINGERS = 4; // clear open palm needed to ARM a swipe...
 const SWIPE_HOLD_FINGERS = 2; // ...but only this many to KEEP one alive mid-sweep
-const SWIPE_STILL_SPEED = 0.6; // frame-widths/sec still counted as "holding steady"
-const SWIPE_DX = 0.22; // wrist travel that counts as a swipe
+const SWIPE_STILL_SPEED = 0.25; // frame-widths/sec still counted as "holding steady"
+const SWIPE_DX = 0.13; // wrist travel that counts as one tab of swipe
 const SWIPE_WINDOW_MS = 400; // ...within this long
 const SWIPE_MIN_SAMPLES = 2; // samples needed to measure it — 2 so fast swipes register
-const SWIPE_REPEAT_MS = 250; // between consecutive swipes of one continuous sweep
+const SWIPE_REPEAT_MS = 150; // between consecutive tabs of one continuous sweep
 const SWIPE_REVERSE_LOCK_MS = 600; // after a fire, ignore the opposite direction this long
-const SWIPE_IDLE_DISARM_FRAMES = 8; // a palm gone still this long ends the swipe session
+// How long the relaxed SWIPE_HOLD_FINGERS threshold survives after the hand stops
+// moving. Needs to be > 0: the fingers merge as the sweep BEGINS, often a frame
+// before the wrist speed registers, and a strict this-frame-only test drops the arm
+// right at the start of the gesture. Once it lapses the strict count applies again,
+// which is what hands control back to the 1-3 finger gestures (~330 ms at 24 Hz).
+const SWIPE_MERGE_GRACE_FRAMES = 8;
+
+// INVARIANT (pinned by tools/gesture-selfcheck.mjs): SWIPE_STILL_SPEED must stay
+// below SWIPE_DX / SWIPE_WINDOW_MS — the slowest hand that can still fire a swipe.
+// If "still" were the faster of the two there'd be a band where a slow drift counts
+// as holding steady AND trips a swipe, so the hand would never disarm while quietly
+// flipping tabs. Retune any of the three and keep this ordering.
+
 // How far past its middle joint a finger must reach to count as extended. Raise if
 // half-curled fingers register; lower if fully-extended ones are missed.
 const FINGER_MARGIN = 1.08;
@@ -98,9 +110,10 @@ let lastFireAt = 0;
 let stableCount = 0;
 let stableFingers = -1;
 let palmFrames = 0;
-let armX = 0; // previous wrist x, for the speed test (arming + idle disarm)
-let armT = 0; // ...and its timestamp, so speed is per-second not per-frame
-let idleFrames = 0; // consecutive near-stationary frames while armed
+let lastX = 0; // previous wrist x, for the per-frame speed test
+let lastT = 0; // ...and its timestamp, so speed is per-second not per-frame
+let hasLast = false; // whether lastX/lastT hold a real previous sample
+let stillFrames = 0; // consecutive frames the hand has not been moving
 let lastDir = 0; // direction of the last swipe, for the reverse lock
 type Sample = { x: number; t: number };
 let trail: Sample[] = [];
@@ -129,7 +142,8 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     stableCount = 0;
     stableFingers = -1;
     palmFrames = 0;
-    idleFrames = 0;
+    hasLast = false;
+    stillFrames = 0;
     lastDir = 0;
     trail = [];
     return;
@@ -139,39 +153,36 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   const x = 1 - hand[0].x; // mirrored, so hand-moves-right reads as "next"
   const armed = palmFrames >= SWIPE_ARM_FRAMES;
 
+  // Wrist speed since the previous frame, per second so DETECT_HZ can be retuned
+  // freely. Tracked for EVERY frame with a hand in it, not just palm frames, so the
+  // pose test below can ask "is this hand moving?" before deciding what it is.
+  const dt = Math.max(now - lastT, 1) / 1000;
+  const speed = hasLast ? Math.abs(x - lastX) / dt : Infinity;
+  lastX = x;
+  lastT = now;
+  hasLast = true;
+  const moving = speed > SWIPE_STILL_SPEED;
+  stillFrames = moving ? 0 : stillFrames + 1;
+  const recentlyMoving = stillFrames <= SWIPE_MERGE_GRACE_FRAMES;
+
   // --- open-palm swipe -> cycle focus ---
-  // Arming demands a clear open palm, but once armed a much lower count keeps the
-  // swipe alive: in a real sweep the fingers rotate, overlap and merge, and
-  // MediaPipe stops resolving all five. Requiring 4+ throughout is what made fast,
-  // natural swipes drop out mid-motion.
-  if (fingers >= (armed ? SWIPE_HOLD_FINGERS : SWIPE_ARM_FINGERS)) {
+  // Arming demands a clear open palm. Once armed AND MOVING, a much lower count
+  // keeps the swipe alive: in a real sweep the fingers rotate, overlap and merge and
+  // MediaPipe stops resolving all five, which is what made fast natural swipes drop
+  // out mid-motion. The `moving` half matters — relaxing the count for a STATIONARY
+  // armed hand would swallow the 2- and 3-finger gestures, since an armed palm
+  // showing two fingers would read as a swipe pose forever.
+  if (fingers >= (armed && recentlyMoving ? SWIPE_HOLD_FINGERS : SWIPE_ARM_FINGERS)) {
     // An open palm is the swipe pose, never a finger-count pose.
     stableCount = 0;
     stableFingers = -1;
-
-    // Speed since the previous frame, per second so DETECT_HZ can be retuned freely.
-    const dt = Math.max(now - armT, 1) / 1000;
-    const speed = palmFrames > 0 ? Math.abs(x - armX) / dt : Infinity;
-    armX = x;
-    armT = now;
 
     // Arm on a palm held STILL. Presence alone does not work — an arm crossing the
     // frame (reaching past the laptop, a coach gesturing over it) stays open-handed
     // the whole way and would accumulate enough trail to fire. Pausing first is what
     // separates "swiped on purpose" from "passed through".
     if (!armed) {
-      palmFrames = speed <= SWIPE_STILL_SPEED ? palmFrames + 1 : 1;
-      trail = [];
-      return;
-    }
-
-    // A palm that stops moving ends the swipe session, handing control back to the
-    // finger-count gestures without making you take your hand out of frame.
-    idleFrames = speed <= SWIPE_STILL_SPEED ? idleFrames + 1 : 0;
-    if (idleFrames >= SWIPE_IDLE_DISARM_FRAMES) {
-      palmFrames = 0;
-      idleFrames = 0;
-      lastDir = 0;
+      palmFrames = moving ? 1 : palmFrames + 1;
       trail = [];
       return;
     }
@@ -202,7 +213,6 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   }
 
   palmFrames = 0;
-  idleFrames = 0;
   lastDir = 0;
   trail = [];
 
@@ -292,10 +302,11 @@ export const __test = {
     stableCount = 0;
     stableFingers = -1;
     palmFrames = 0;
-    idleFrames = 0;
+    hasLast = false;
+    stillFrames = 0;
     lastDir = 0;
-    armX = 0;
-    armT = 0;
+    lastX = 0;
+    lastT = 0;
     trail = [];
   },
   DETECT_HZ,
@@ -303,7 +314,9 @@ export const __test = {
   COOLDOWN_MS,
   SWIPE_ARM_FRAMES,
   SWIPE_DX,
+  SWIPE_WINDOW_MS,
+  SWIPE_STILL_SPEED,
   SWIPE_REPEAT_MS,
   SWIPE_REVERSE_LOCK_MS,
-  SWIPE_IDLE_DISARM_FRAMES,
+  SWIPE_MERGE_GRACE_FRAMES,
 };

@@ -45,8 +45,9 @@ const {
   DWELL_FRAMES,
   SWIPE_ARM_FRAMES,
   SWIPE_DX,
+  SWIPE_WINDOW_MS,
+  SWIPE_STILL_SPEED,
   SWIPE_REVERSE_LOCK_MS,
-
 } = mod.__test;
 
 // Build a 21-landmark hand, laid out like a real one seen palm-on with the fingers
@@ -266,16 +267,64 @@ check('fast two-sample swipe registers', run([...armAt(), ...travel(2, SWIPE_DX 
   );
 }
 
-// A palm gone still ends the swipe session, so finger-counts work again without
-// taking your hand out of frame. The still period is a LITERAL 20 frames, not
-// SWIPE_IDLE_DISARM_FRAMES + n — deriving it from the constant would scale the input
-// with any mutation and the case could never fail.
-// Verified non-vacuous: with SWIPE_IDLE_DISARM_FRAMES = 9999 this returns [].
+// An armed hand that STOPS still hands control back to the finger counts, without
+// taking it out of frame. This is what the `moving` half of the pose test buys: the
+// relaxed SWIPE_HOLD_FINGERS threshold applies only mid-sweep, so a stationary armed
+// palm showing two fingers reads as a count, not as a swipe pose forever.
+// The 26 frames are a LITERAL, comfortably past the grace window plus the dwell.
+// Verified non-vacuous: with SWIPE_MERGE_GRACE_FRAMES = 9999 this returns [].
 check(
-  'palm going still disarms and hands back to counts',
-  run([...armAt(), ...rep(20, { ext: OPEN }), ...rep(DWELL_FRAMES + 2, { ext: ['index', 'middle'] })]),
+  'armed but stationary hand still honours finger counts',
+  run([...armAt(), ...rep(26, { ext: ['index', 'middle'] })]),
   ['open:2'],
 );
+
+// "less time between breaks of movement" — an ordinary pause between two swipes
+// must NOT disarm the hand. 12 frames (~500 ms) is a normal beat between strokes;
+// the second swipe has to land without a fresh still-hold. Literal count.
+// Verified non-vacuous: with SWIPE_IDLE_DISARM_FRAMES = 8 this returns ['next'].
+check(
+  'a pause between swipes does not disarm',
+  run([
+    ...armAt(),
+    ...travel(4, SWIPE_DX + 0.04),
+    ...rep(12, { ext: OPEN, x: -(SWIPE_DX + 0.04) }),
+    ...travel(4, SWIPE_DX + 0.04, OPEN, -(SWIPE_DX + 0.04)),
+  ]),
+  ['next', 'next'],
+);
+
+// "multiple tabs in one swipe if it is far enough" — a full-width sweep should
+// advance several tabs, not one.
+{
+  const fired = run([...armAt(), ...travel(20, 0.85)]);
+  const ok = fired.length >= 3 && fired.every((f) => f === 'next');
+  try {
+    assert.ok(ok, `expected >=3 consecutive 'next', got [${fired}]`);
+    console.log(`  ok   long sweep advances several tabs -> [${fired}]`);
+  } catch (err) {
+    failed++;
+    console.error(`  FAIL long sweep advances several tabs: ${err.message}`);
+  }
+}
+
+// THE TUNING INVARIANT. "Still" must be slower than the slowest hand that can fire
+// a swipe. Otherwise there's a band where a drifting hand counts as holding steady
+// AND trips swipes — it would never disarm while quietly flipping tabs. This guards
+// the relationship between three constants that are all meant to be hand-tuned.
+{
+  const slowestFiring = SWIPE_DX / (SWIPE_WINDOW_MS / 1000);
+  try {
+    assert.ok(
+      SWIPE_STILL_SPEED < slowestFiring,
+      `SWIPE_STILL_SPEED (${SWIPE_STILL_SPEED}) must stay below SWIPE_DX/SWIPE_WINDOW_MS (${slowestFiring.toFixed(3)} widths/s)`,
+    );
+    console.log(`  ok   still-speed invariant: ${SWIPE_STILL_SPEED} < ${slowestFiring.toFixed(3)} widths/s`);
+  } catch (err) {
+    failed++;
+    console.error(`  FAIL still-speed invariant: ${err.message}`);
+  }
+}
 
 // Cooldown: a second gesture immediately after a fire is swallowed.
 check(
