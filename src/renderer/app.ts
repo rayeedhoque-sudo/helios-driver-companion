@@ -130,6 +130,37 @@ function wireLayoutPersistence(api: DockviewApi): void {
   });
 }
 
+// Keyboard panel navigation. Ctrl+1..9 opens/focuses the Nth registry panel;
+// Ctrl+Tab / Ctrl+Shift+Tab cycles focus through the open ones.
+//
+// SAFETY: these only ever call openPanel / moveToNext / moveToPrevious — they move
+// FOCUS, never a panel and never a click. Nothing here can reach a Controls or
+// Deploy button, and moveToNext/Previous don't mutate the layout, so a mistaken
+// keypress can't churn the persisted layout blob either. Keep it that way.
+function wireKeybinds(api: DockviewApi): void {
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.altKey || e.metaKey) return;
+    // Don't steal keys from the settings modal's text inputs.
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) api.moveToPrevious({ includePanel: true });
+      else api.moveToNext({ includePanel: true });
+      return;
+    }
+    // Ctrl+1..9 -> registry panels 1..9. Panels past the 9th stay menu-only.
+    if (e.shiftKey) return;
+    const n = Number(e.key);
+    if (!Number.isInteger(n) || n < 1 || n > 9) return;
+    const def = PANELS[n - 1];
+    if (!def) return;
+    e.preventDefault();
+    openPanel(api, def.id);
+  });
+}
+
 // "+ Panels" top-bar menu: lists every registry panel; click opens/focuses it.
 function wirePanelsMenu(api: DockviewApi): void {
   const btn = el('btn-panels');
@@ -179,6 +210,7 @@ async function boot(): Promise<void> {
   restoreLayout(dock);
   wireLayoutPersistence(dock);
   wirePanelsMenu(dock);
+  wireKeybinds(dock);
 
   // The station picker + follow-the-DS lock now live inside the field panel (field.ts).
   wireSettingsModal();
