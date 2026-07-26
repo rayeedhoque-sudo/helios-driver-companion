@@ -97,12 +97,21 @@ function hand(ext = [], marginal = null, pinched = false) {
   // Tucked: folded up across the palm — FURTHER from the wrist than joint 2, which
   // is precisely what fooled the old radial test.
   lm[4] = ext.includes('thumb') ? P(0.33, 0.74) : P(0.48, 0.74);
-  // Pinch: thumb tip NEAR the index tip, not exactly on it. Real pinches measured
-  // 0.06-0.21 on this camera, never 0 — and a perfect zero made the check blind,
-  // because any positive PINCH_ON threshold still passed. Same trap the thumb model
-  // fell into. pinchRatio is dist(4,8)/dist(0,9); dist(0,9) here is 0.10, so an
-  // offset of 0.015 gives 0.15, the measured median.
-  if (pinched) lm[4] = P(lm[TIP.index].x + 0.015, lm[TIP.index].y);
+  // Pinch. Reproduces BOTH measured pinch features, not just the obvious one:
+  //   pinchRatio    = dist(4,8)/dist(0,9)  -> 0.151 (measured median)
+  //   pinchVsMiddle = dist(4,8)/dist(4,12) -> 2.32  (measured median)
+  // dist(0,9) is 0.10 here, so dist(4,8) must be 0.0151 and dist(4,12) 0.0065.
+  // Those are closer together than the default fingertip spacing allows, so the
+  // index and middle tips move too — which is what a real hand does, the fingers
+  // come forward to meet the thumb. An earlier version only set the thumb and left
+  // the fingers spread; it satisfied pinchRatio but not pinchVsMiddle, so it stopped
+  // being a pinch the moment a second discriminator was added. Third time an
+  // idealised hand has gone stale here; prefer the REAL fixtures below for new work.
+  if (pinched) {
+    lm[TIP.index] = P(0.47, 0.76);
+    lm[4] = P(0.4849, 0.7625); // dist to index tip = 0.0151
+    lm[TIP.middle] = P(0.4884, 0.768); // dist from thumb = 0.0065
+  }
   return lm;
 }
 
@@ -472,6 +481,73 @@ check(
   for (let i = 0; i < PINCH_HOLD_FRAMES + 4; i++) feed(hand([], null, true));
   for (let i = 0; i < 4; i++) feed(null); // tracking drops out mid-drag
   check('losing the hand mid-drag cancels, never drops', act.fired, ['grab:right', 'cancel']);
+}
+
+
+// ---- real recorded poses -----------------------------------------------------
+// Real landmark frames recorded on the driver laptop 2026-07-26, one
+// representative (median pinch-ratio) frame per pose. Fixtures rather than
+// synthetic hands because an idealised synthetic model has twice hidden a real
+// bug in this suite — the thumb-extension test and the pinch/fist split.
+// [x, y] pairs, MediaPipe landmark order 0..20.
+const REAL = {
+  PINCH: /* pinchRatio 0.151 */ [[0.3352,0.7901],[0.3753,0.7532],[0.4041,0.6928],[0.4125,0.6444],[0.4116,0.6],[0.3858,0.571],[0.4037,0.5351],[0.4254,0.5574],[0.4433,0.5879],[0.3568,0.5669],[0.3795,0.521],[0.4012,0.5527],[0.4164,0.5916],[0.3266,0.5828],[0.3448,0.5421],[0.3675,0.5761],[0.3842,0.6115],[0.2974,0.6184],[0.3219,0.6022],[0.3477,0.6196],[0.3692,0.6344]],
+  FIST: /* pinchRatio 0.298 */ [[0.2124,0.945],[0.2515,0.9035],[0.2869,0.8269],[0.2762,0.7586],[0.2402,0.7329],[0.2817,0.7464],[0.2967,0.6993],[0.2851,0.7689],[0.2773,0.7834],[0.2479,0.738],[0.2593,0.6933],[0.2528,0.7734],[0.245,0.7791],[0.214,0.7447],[0.2224,0.7051],[0.2248,0.7802],[0.2177,0.7849],[0.1779,0.759],[0.1919,0.7289],[0.1974,0.7806],[0.1916,0.7906]],
+  BENT_PALM: /* pinchRatio 0.891 */ [[0.2222,0.9534],[0.2761,0.9037],[0.3202,0.8352],[0.3542,0.788],[0.3889,0.7544],[0.2771,0.7099],[0.2948,0.6283],[0.3064,0.5836],[0.3223,0.5456],[0.2419,0.7081],[0.245,0.623],[0.2523,0.5784],[0.2677,0.5439],[0.2094,0.7296],[0.2071,0.6487],[0.2151,0.6072],[0.2321,0.5766],[0.1781,0.7683],[0.1746,0.7044],[0.1808,0.6647],[0.1946,0.6312]],
+  TILTED_PALM: /* pinchRatio 0.972 */ [[0.2839,0.872],[0.3293,0.8191],[0.359,0.7437],[0.385,0.6919],[0.4124,0.6578],[0.3306,0.6247],[0.343,0.5316],[0.3561,0.4748],[0.3709,0.424],[0.3061,0.6287],[0.3105,0.5292],[0.3223,0.4639],[0.3358,0.4049],[0.2818,0.6574],[0.2793,0.5623],[0.2855,0.5044],[0.2945,0.4526],[0.2586,0.7033],[0.2518,0.6341],[0.2534,0.5842],[0.2574,0.5353]],
+  FLAT_PALM: /* pinchRatio 1.173 */ [[0.2532,0.8783],[0.3078,0.8296],[0.3545,0.7666],[0.3929,0.7158],[0.4279,0.6912],[0.3037,0.6292],[0.3219,0.5261],[0.3325,0.4618],[0.3403,0.4036],[0.2664,0.6224],[0.2707,0.5059],[0.2728,0.4311],[0.2728,0.3684],[0.2322,0.6409],[0.2218,0.5378],[0.2142,0.4695],[0.2083,0.4114],[0.2002,0.6794],[0.1834,0.6062],[0.1723,0.5563],[0.1635,0.5082]],
+};
+
+// Turn a fixture into the landmark shape classify() expects, optionally shifted
+// horizontally to simulate the hand travelling across the frame.
+const real = (pose, dx = 0) => REAL[pose].map(([x, y]) => ({ x: x + dx, y, z: 0 }));
+
+const drive = (frames) => {
+  const act = recorder();
+  reset();
+  let t = 10_000;
+  for (const lm of frames) {
+    classify({ landmarks: [lm], handedness: [[{ categoryName: 'Right', score: 0.98 }]] }, act, t);
+    t += 1000 / DETECT_HZ;
+  }
+  return act.fired;
+};
+
+console.log('\nreal recorded poses -> what the classifier does with them:');
+
+// A FIST must not grab. It sat inside the old PINCH_ON and silently picked up a tab,
+// after which the pinch branch returned early every frame and the palm that followed
+// was never seen as a palm — the reported "can't recognise my palm when tilted or
+// bent".
+//
+// Non-vacuous, but it takes BOTH mutations to show it: restoring PINCH_ON to 0.45
+// AND dropping the pinchVsMiddle test makes this return ['grab:right']. Either guard
+// alone still blocks a fist, which is the point — the two thresholds sit only 2-3%
+// off the measured fist range individually, so a false grab needs both to drift at
+// once. Do not "simplify" this back to a single condition.
+check('a real FIST never grabs a tab', drive(Array.from({ length: 30 }, () => real('FIST'))), []);
+
+// The other side of that threshold: tightening PINCH_ON to keep fists out must not
+// lock real pinches out too.
+check('a real PINCH still grabs', drive(Array.from({ length: 12 }, () => real('PINCH'))), ['grab:right']);
+
+// The actual complaint: tilted and bent palms must still drive a swipe. Each is a
+// real recorded frame stepped sideways to simulate the sweep. Mirrored x means a
+// DECREASING raw x reads as moving to your right, so these expect 'next'.
+// Asserted as "fires at least once, all in the right direction" rather than an exact
+// count: the sweep here covers 0.28 frame-widths against SWIPE_DX 0.10, so several
+// tabs legitimately advance. What matters is that a tilted or bent palm is seen as a
+// palm at all, which is what regressed.
+for (const pose of ['FLAT_PALM', 'TILTED_PALM', 'BENT_PALM']) {
+  const fired = drive(Array.from({ length: 14 }, (_, i) => real(pose, -0.02 * i)));
+  const ok = fired.length >= 1 && fired.every((f) => f === 'next:right');
+  try {
+    assert.ok(ok, `expected >=1 'next:right' and nothing else, got [${fired}]`);
+    console.log(`  ok   a real ${pose} swipes -> [${fired}]`);
+  } catch (err) {
+    failed++;
+    console.error(`  FAIL a real ${pose} swipes: ${err.message}`);
+  }
 }
 
 console.log(failed ? `\n${failed} case(s) failed` : '\ngesture self-check passed');

@@ -105,19 +105,32 @@ const SWIPE_MERGE_GRACE_FRAMES = 8;
 // (wrist 0 to middle MCP 9), so it is scale-free — it does not care how close your
 // hand is to the camera.
 //
-// Measured on the driver laptop's camera 2026-07-25, 505 held-pinch frames and 63
-// open-palm frames at the app's real capture settings:
-//   held pinch (still and dragging): 0.06 - 0.21, p90 0.21
-//   open palm:                       1.24 - 1.34
-// An enormous gap. At PINCH_ON 0.45, zero held-pinch frames read as released and
-// zero open-palm frames read as pinched.
-//
 // Worth knowing: a pinch reads extendedCount 0, NOT 3 as the visible finger count
 // suggests — so it does not collide with the 1-3 finger panel gestures. The pinch
 // branch still runs before them and returns, because during a drag the count
 // flickers between 0 and 1 and 1 is a real gesture.
-const PINCH_ON = 0.45; // below this ratio the hand is pinching
-const PINCH_OFF = 0.75; // above this it has let go — hysteresis, so it cannot flutter
+//
+// RETUNED 2026-07-26 after "the app can't see my palm when tilted or my fingers are
+// bent". The palm test was never the problem — extendedCount reads >= 4 on 100% of
+// tilted and bent frames. The real cause was this path stealing them: at PINCH_ON
+// 0.45 a plain FIST (ratio 0.26-0.35) read as a pinch, silently grabbed a tab, and
+// then returned early every frame, so the palm that followed was never seen as a
+// palm. Opening the hand afterwards DROPPED the tab, moving a panel unasked.
+//
+// Measured, all on this camera: held pinch 0.02-0.44 (p50 0.15) | fist 0.26-0.35 |
+// bent palm 0.76-1.13 | tilted palm 0.80-2.14 | flat palm 1.15-1.20.
+//
+// Pinch and fist OVERLAP on ratio alone, so one threshold cannot separate them with
+// any margin (0.25 leaves 3%). Starting a grab therefore needs BOTH tests, and a
+// fist fails both — it would take two independent drifts to false-trigger:
+//   ratio  < PINCH_ON        fist min 0.258 vs 0.25
+//   vsMid  > PINCH_VS_MIDDLE fist max 1.471 vs 1.50
+// vsMid is thumb-to-index over thumb-to-middle: high when the thumb has singled out
+// the index finger, ~1.3 when it lies across a closed fist, <1.1 on an open palm.
+// A held pinch satisfies both for 209 consecutive frames, against 3 required.
+const PINCH_ON = 0.25; // thumb-index over palm span, below this = pinching
+const PINCH_VS_MIDDLE = 1.5; // ...and the thumb must be singling out the INDEX, not fisted
+const PINCH_OFF = 0.6; // release. Above held-pinch max 0.44, below palm min 0.76.
 const PINCH_HOLD_FRAMES = 3; // frames before a pinch counts as a deliberate grab
 
 // INVARIANT (pinned by tools/gesture-selfcheck.mjs): SWIPE_STILL_SPEED must stay
@@ -172,6 +185,14 @@ function extendedCount(lm: Pt[]): number {
 function pinchRatio(lm: Pt[]): number {
   const span = dist(lm[0], lm[9]);
   return span > 0 ? dist(lm[4], lm[8]) / span : Infinity;
+}
+
+// Is the thumb singling out the INDEX finger, or just lying across a closed hand?
+// Thumb-to-index over thumb-to-middle: high for a real pinch, ~1.3 for a fist, <1.1
+// for an open palm. This is what keeps a fist out of the pinch path — see PINCH_ON.
+function pinchVsMiddle(lm: Pt[]): number {
+  const toMiddle = dist(lm[4], lm[12]);
+  return toMiddle > 0 ? dist(lm[4], lm[8]) / toMiddle : 0;
 }
 
 // ---- runtime -----------------------------------------------------------------
@@ -282,7 +303,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     return;
   }
 
-  if (pinch < PINCH_ON) {
+  if (pinch < PINCH_ON && pinchVsMiddle(hand) > PINCH_VS_MIDDLE) {
     // Brief hold before committing, so a hand passing through a pinch-like shape on
     // its way to some other pose doesn't grab a tab.
     pinchFrames++;
@@ -488,7 +509,9 @@ export const __test = {
   SWIPE_REVERSE_LOCK_MS,
   SWIPE_MERGE_GRACE_FRAMES,
   PINCH_ON,
+  PINCH_VS_MIDDLE,
   PINCH_OFF,
   PINCH_HOLD_FRAMES,
   pinchRatio,
+  pinchVsMiddle,
 };
