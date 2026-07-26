@@ -51,6 +51,20 @@ const SWIPE_REVERSE_LOCK_MS = 600; // after a fire, ignore the opposite directio
 // which is what hands control back to the 1-3 finger gestures (~330 ms at 24 Hz).
 const SWIPE_MERGE_GRACE_FRAMES = 8;
 
+// --- fist path: one tab per stroke -------------------------------------------
+// A CLOSED FIST swept sideways moves exactly one tab. Chosen because a fist is the
+// one hand shape nothing else uses -- counts take 1-3 fingers, the swipe arms at
+// SWIPE_ARM_FINGERS and holds at SWIPE_HOLD_FINGERS -- so it cannot collide with
+// them and the multi-tab swipe needed no changes at all.
+//
+// Measured on the driver laptop's own camera 2026-07-25 (held poses, ~200 samples
+// each): fist reads extendedCount 0 with openness 0.62-0.86, one finger reads 1 at
+// 0.95-1.05, open palm reads 5 at 1.69-1.77. No overlap between any of them.
+const FIST_DX = 0.1; // wrist travel that commits the one-tab move
+const FIST_WINDOW_MS = 500; // ...within this long
+const FIST_MIN_SAMPLES = 2; // so a fast flick still registers
+const FIST_COOLDOWN_MS = 600; // between consecutive one-tab strokes
+
 // INVARIANT (pinned by tools/gesture-selfcheck.mjs): SWIPE_STILL_SPEED must stay
 // below SWIPE_DX / SWIPE_WINDOW_MS — the slowest hand that can still fire a swipe.
 // If "still" were the faster of the two there'd be a band where a slow drift counts
@@ -117,6 +131,8 @@ let stillFrames = 0; // consecutive frames the hand has not been moving
 let lastDir = 0; // direction of the last swipe, for the reverse lock
 type Sample = { x: number; t: number };
 let trail: Sample[] = [];
+let fistTrail: Sample[] = []; // wrist path while a fist is held
+let fistSpent = false; // a stroke already fired; needs a pause or release to re-arm
 
 let onStatus: (text: string, kind: 'idle' | 'live' | 'error') => void = () => {};
 
@@ -146,6 +162,8 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     stillFrames = 0;
     lastDir = 0;
     trail = [];
+    fistTrail = [];
+    fistSpent = false;
     return;
   }
 
@@ -164,6 +182,55 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   const moving = speed > SWIPE_STILL_SPEED;
   stillFrames = moving ? 0 : stillFrames + 1;
   const recentlyMoving = stillFrames <= SWIPE_MERGE_GRACE_FRAMES;
+
+  // --- closed fist swept sideways -> exactly ONE tab ---------------------------
+  // Direction is HAND-RELATIVE, not screen-relative: sweeping across your body means
+  // the same thing whichever hand you use.
+  //   inward  (right hand to your left,  left hand to your right) -> previous
+  //   outward (right hand to your right, left hand to your left)  -> next
+  // For the right hand that matches the open-palm swipe exactly (left = previous);
+  // the left hand mirrors it. Flip the two calls below to reverse the mapping.
+  if (fingers === 0) {
+    // A fist is not a swipe pose and not a count pose — drop both.
+    stableCount = 0;
+    stableFingers = -1;
+    palmFrames = 0;
+    trail = [];
+
+    // One flick = one tab. After a stroke fires, keep the fist inert until it
+    // either pauses or opens — otherwise a long continuous drag keeps re-firing and
+    // this stops being the single-tab gesture.
+    if (fistSpent) {
+      if (!moving) fistSpent = false;
+      fistTrail = [];
+      return;
+    }
+
+    fistTrail.push({ x, t: now });
+    fistTrail = fistTrail.filter((s) => now - s.t <= FIST_WINDOW_MS);
+    if (now - lastFireAt < FIST_COOLDOWN_MS || fistTrail.length < FIST_MIN_SAMPLES) return;
+
+    const dx = fistTrail[fistTrail.length - 1].x - fistTrail[0].x;
+    if (Math.abs(dx) < FIST_DX) return;
+
+    // x is mirrored (see above), so dx > 0 means the hand moved to YOUR right.
+    // MediaPipe's handedness label is used as-is: verified on this camera
+    // 2026-07-25 — a right hand moving left reported "Right", a left hand moving
+    // right reported "Left". Do NOT invert it without re-measuring; the two
+    // gestures are mirror images and a flipped label silently swaps them.
+    const isRightHand = res.handedness?.[0]?.[0]?.categoryName !== 'Left';
+    const toTheRight = dx > 0;
+    const outward = isRightHand === toTheRight;
+    if (outward) actions.focusNext();
+    else actions.focusPrev();
+    onStatus(outward ? 'next tab' : 'previous tab', 'live');
+    lastFireAt = now;
+    fistSpent = true;
+    fistTrail = [];
+    return;
+  }
+  fistTrail = [];
+  fistSpent = false; // pose released — ready for the next stroke
 
   // --- open-palm swipe -> cycle focus ---
   // Arming demands a clear open palm. Once armed AND MOVING, a much lower count
@@ -308,6 +375,8 @@ export const __test = {
     lastX = 0;
     lastT = 0;
     trail = [];
+    fistTrail = [];
+    fistSpent = false;
   },
   DETECT_HZ,
   DWELL_FRAMES,
@@ -319,4 +388,7 @@ export const __test = {
   SWIPE_REPEAT_MS,
   SWIPE_REVERSE_LOCK_MS,
   SWIPE_MERGE_GRACE_FRAMES,
+  FIST_DX,
+  FIST_COOLDOWN_MS,
+  FIST_WINDOW_MS,
 };

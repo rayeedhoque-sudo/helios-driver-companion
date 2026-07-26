@@ -48,6 +48,7 @@ const {
   SWIPE_WINDOW_MS,
   SWIPE_STILL_SPEED,
   SWIPE_REVERSE_LOCK_MS,
+  FIST_DX,
 } = mod.__test;
 
 // Build a 21-landmark hand, laid out like a real one seen palm-on with the fingers
@@ -142,13 +143,13 @@ function recorder() {
 
 // Feed `frames` (each: {ext, x}) at 1/DETECT_HZ intervals. x shifts the whole hand
 // horizontally to simulate travel; MediaPipe x is normalized and gestures.ts mirrors it.
-function run(frames, startAt = 10_000) {
+function run(frames, startAt = 10_000, handLabel = 'Right') {
   const act = recorder();
   reset();
   let t = startAt;
   for (const f of frames) {
     const lm = hand(f.ext).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
-    classify({ landmarks: [lm] }, act, t);
+    classify({ landmarks: [lm], handedness: [[{ categoryName: handLabel, score: 0.98 }]] }, act, t);
     t += 1000 / DETECT_HZ;
   }
   return act.fired;
@@ -350,6 +351,64 @@ check(
   for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand(['index']));
   check('hand leaving frame resets dwell', act.fired, []);
 }
+
+// ---- fist path: exactly one tab per stroke -----------------------------------
+// Direction is HAND-RELATIVE. All four hand x direction combinations are covered
+// because a flipped handedness label would silently swap the two gestures and only
+// half the table would notice. Measured on the real camera 2026-07-25: a right hand
+// moving left reports "Right", a left hand moving right reports "Left".
+console.log('\nfist -> one tab (hand-relative direction):');
+
+const FIST = []; // no digits extended
+// A fist stroke: `dir` +1 travels to YOUR right, -1 to your left. run() mirrors x,
+// so a move to your right is a DECREASING raw x.
+const fistStroke = (dir) => travel(4, dir * (FIST_DX + 0.05), FIST);
+
+for (const [hand, dir, want, label] of [
+  ['Right', +1, 'next', 'right hand, outward (to your right)'],
+  ['Right', -1, 'prev', 'right hand, inward (across your body)'],
+  ['Left', -1, 'next', 'left hand, outward (to your left)'],
+  ['Left', +1, 'prev', 'left hand, inward (across your body)'],
+]) {
+  check(`fist ${label} -> ${want}`, run(fistStroke(dir), 10_000, hand), [want]);
+}
+
+// One flick = ONE tab. A long continuous fist drag must still move a single tab,
+// which is the whole point of this gesture existing alongside the multi-tab sweep.
+// Verified non-vacuous: without the fistSpent re-arm gate this returns ['next','next'].
+check('long fist drag still moves only one tab', run(travel(20, 0.8, FIST), 10_000, 'Right'), ['next']);
+
+// ...but two deliberate strokes with a pause between them move two tabs.
+check(
+  'two fist strokes with a pause move two tabs',
+  run(
+    [
+      ...travel(4, FIST_DX + 0.05, FIST),
+      ...rep(20, { ext: FIST, x: -(FIST_DX + 0.05) }),
+      ...travel(4, FIST_DX + 0.05, FIST, -(FIST_DX + 0.05)),
+    ],
+    10_000,
+    'Right',
+  ),
+  ['next', 'next'],
+);
+
+// A fist held still does nothing — it must not fire on presence alone.
+check('fist held still does nothing', run(rep(20, { ext: FIST }), 10_000, 'Right'), []);
+
+// A fist travelling less than FIST_DX is not a stroke.
+check('fist moved too little does nothing', run(travel(6, FIST_DX * 0.5, FIST), 10_000, 'Right'), []);
+
+// The fist path must not disturb the open-palm swipe, which was left untouched.
+check(
+  'open-palm swipe still works after the fist addition',
+  run([...armAt(), ...travel(5, SWIPE_DX + 0.06)]),
+  ['next'],
+);
+
+// A fist is not a count pose: 0 extended fingers must never open a panel, even held
+// well past the dwell. This is the "a fist opened Limelight" regression.
+check('fist never fires a panel count', run(rep(DWELL_FRAMES + 10, { ext: FIST }), 10_000, 'Right'), []);
 
 console.log(failed ? `\n${failed} case(s) failed` : '\ngesture self-check passed');
 process.exit(failed ? 1 : 0);
