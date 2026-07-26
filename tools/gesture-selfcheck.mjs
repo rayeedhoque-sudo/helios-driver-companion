@@ -36,7 +36,7 @@ const res = await build({
   plugins: [stub],
 });
 const mod = await import(`data:text/javascript;base64,${Buffer.from(res.outputFiles[0].text).toString('base64')}`);
-const { extendedCount } = mod.__test;
+const { extendedCount, classify, reset, DWELL_FRAMES, SWIPE_ARM_FRAMES, COOLDOWN_MS, SWIPE_DX } = mod.__test;
 
 // Build a 21-landmark hand. `reach` maps finger name -> tip distance from the wrist;
 // the middle joint always sits at 0.10. Extended fingers reach past it, curled ones
@@ -84,6 +84,116 @@ for (const [name, reach, want] of cases) {
     failed++;
     console.error(`  FAIL ${err.message}`);
   }
+}
+
+// ---- classify(): the part that actually fires actions ------------------------
+// Drives synthetic frame sequences through the real classifier with a stubbed
+// action sink and an explicit clock, so dwell / cooldown / swipe-arming are pinned.
+// None of this is reachable by a live camera test.
+const OPEN = { thumb: EXT, index: EXT, middle: EXT, ring: EXT, pinky: EXT };
+
+function recorder() {
+  const fired = [];
+  return {
+    fired,
+    openNth: (n) => fired.push(`open:${n}`),
+    focusNext: () => fired.push('next'),
+    focusPrev: () => fired.push('prev'),
+  };
+}
+
+// Feed `frames` (each: {reach, x}) at 1/DETECT_HZ intervals. x shifts the whole hand
+// horizontally to simulate travel; MediaPipe x is normalized and gestures.ts mirrors it.
+function run(frames, startAt = 10_000) {
+  const act = recorder();
+  reset();
+  let t = startAt;
+  for (const f of frames) {
+    const lm = hand(f.reach).map((p) => ({ ...p, x: p.x + (f.x ?? 0) }));
+    classify({ landmarks: [lm] }, act, t);
+    t += 1000 / 12; // DETECT_HZ
+  }
+  return act.fired;
+}
+
+const rep = (n, frame) => Array.from({ length: n }, () => frame);
+
+function check(name, got, want) {
+  try {
+    assert.deepEqual(got, want, `${name}: expected [${want}], got [${got}]`);
+    console.log(`  ok   ${name} -> [${got}]`);
+  } catch (err) {
+    failed++;
+    console.error(`  FAIL ${err.message}`);
+  }
+}
+
+console.log('\nclassify() — dwell, cooldown, swipe arming:');
+
+// A count held past DWELL_FRAMES fires exactly once, not once per frame.
+check(
+  'two fingers held fires once',
+  run(rep(DWELL_FRAMES + 6, { reach: { index: EXT, middle: EXT } })),
+  ['open:2'],
+);
+
+// Held below the dwell threshold: nothing. This is the flicker guard.
+check('two fingers held briefly does nothing', run(rep(DWELL_FRAMES - 1, { reach: { index: EXT, middle: EXT } })), []);
+
+// Changing the count restarts the dwell — a hand in transit must not fire.
+check(
+  'count changing mid-dwell does not fire',
+  run([
+    ...rep(DWELL_FRAMES - 1, { reach: { index: EXT } }),
+    ...rep(DWELL_FRAMES - 1, { reach: { index: EXT, middle: EXT } }),
+  ]),
+  [],
+);
+
+// Open palm travelling right -> exactly one 'next', despite many qualifying frames.
+const travel = (n, total) => Array.from({ length: n }, (_, i) => ({ reach: OPEN, x: -(total * i) / (n - 1) }));
+check('open palm swipe fires once', run([...rep(SWIPE_ARM_FRAMES, { reach: OPEN }), ...travel(5, SWIPE_DX + 0.06)]), [
+  'next',
+]);
+
+// THE REGRESSION GUARD for the arming gate: a hand crossing the whole frame fast,
+// with no preceding pose hold — an arm reaching past the laptop, a coach gesturing
+// over it. The arming gate eats the opening frames, so the trail never reaches the
+// 3 samples a swipe needs. Frame count is a literal, NOT derived from
+// SWIPE_ARM_FRAMES, so the case stays meaningful if that constant is tuned.
+// Verified non-vacuous: with SWIPE_ARM_FRAMES = 0 this returns ['next'].
+check('fast sweep with no pose hold does not fire', run(travel(5, 0.9)), []);
+
+// The realistic version of the same hazard, and the case the stillness check exists
+// for: an arm crossing the frame over ~1 s at 12 Hz is ~12 frames — long enough that
+// a plain N-frame arming delay lapses and the trail still fills. Only requiring the
+// palm to PAUSE first rejects it.
+// Verified non-vacuous: with SWIPE_STILL_DX = 999 this returns ['next'].
+check('slow arm crossing the frame does not fire', run(travel(12, 0.9)), []);
+
+// Cooldown: a second gesture immediately after a fire is swallowed.
+check(
+  'cooldown swallows an immediate second gesture',
+  run([
+    ...rep(DWELL_FRAMES, { reach: { index: EXT } }),
+    ...rep(DWELL_FRAMES + 2, { reach: { index: EXT, middle: EXT } }),
+  ]),
+  ['open:1'],
+);
+
+// Losing the hand clears dwell — frames either side of a gap must not accumulate.
+{
+  const act = recorder();
+  reset();
+  let t = 10_000;
+  const feed = (lm) => {
+    classify({ landmarks: lm ? [lm] : [] }, act, t);
+    t += 1000 / 12;
+  };
+  for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand({ index: EXT }));
+  feed(null); // hand leaves frame
+  for (let i = 0; i < DWELL_FRAMES - 1; i++) feed(hand({ index: EXT }));
+  check('hand leaving frame resets dwell', act.fired, []);
 }
 
 console.log(failed ? `\n${failed} case(s) failed` : '\ngesture self-check passed');

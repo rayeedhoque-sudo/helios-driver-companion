@@ -28,6 +28,8 @@ export interface GestureActions {
 // actual driver laptop, not derived. Raise DWELL/COOLDOWN if you get false fires.
 const DETECT_HZ = 12; // inference rate; the DS + Limelight stream share this CPU
 const DWELL_FRAMES = 6; // consecutive stable frames before a finger-count fires (~0.5 s)
+const SWIPE_ARM_FRAMES = 3; // open palm must be held STILL this long before a swipe can start
+const SWIPE_STILL_DX = 0.04; // per-frame wrist travel still counted as "holding steady"
 const COOLDOWN_MS = 900; // ignore everything right after a fire, so one gesture = one action
 const SWIPE_DX = 0.22; // normalized wrist travel across the frame that counts as a swipe
 const SWIPE_WINDOW_MS = 600; // ...within this long
@@ -69,6 +71,8 @@ let running = false;
 let lastFireAt = 0;
 let stableCount = 0;
 let stableFingers = -1;
+let palmFrames = 0;
+let armX = 0; // wrist x during arming, to tell "held steady" from "passing through"
 type Sample = { x: number; t: number };
 let trail: Sample[] = [];
 
@@ -97,6 +101,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   if (!hand || hand.length < 21) {
     stableCount = 0;
     stableFingers = -1;
+    palmFrames = 0;
     trail = [];
     return;
   }
@@ -107,6 +112,20 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
   // Mirrored so it reads naturally: hand moves right on screen = "next".
   if (fingers >= 4) {
     const x = 1 - hand[0].x;
+    // Arm on a palm held STILL, then track motion. Merely requiring the palm to be
+    // present for a few frames does not work — an arm crossing the frame (reaching
+    // past the laptop, a coach gesturing over it) stays open-handed the whole way
+    // and still accumulates enough trail to fire. Requiring it to pause first is
+    // what separates "swiped on purpose" from "passed through". The finger-count
+    // path has DWELL_FRAMES for the same reason; this is the swipe path's version.
+    if (palmFrames < SWIPE_ARM_FRAMES) {
+      palmFrames = palmFrames > 0 && Math.abs(x - armX) <= SWIPE_STILL_DX ? palmFrames + 1 : 1;
+      armX = x;
+      trail = [];
+      stableCount = 0;
+      stableFingers = -1;
+      return;
+    }
     trail.push({ x, t: now });
     trail = trail.filter((s) => now - s.t <= SWIPE_WINDOW_MS);
     if (trail.length >= 3) {
@@ -117,6 +136,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
         onStatus(dx > 0 ? 'next panel' : 'previous panel', 'live');
         lastFireAt = now;
         trail = [];
+        palmFrames = 0;
         stableCount = 0;
       }
     }
@@ -126,6 +146,7 @@ function classify(res: HandLandmarkerResult, actions: GestureActions, now: numbe
     return;
   }
 
+  palmFrames = 0;
   trail = [];
 
   // --- N fingers held still -> open the Nth panel ---
@@ -201,5 +222,21 @@ export function onGestureStatus(cb: (text: string, kind: 'idle' | 'live' | 'erro
   onStatus = cb;
 }
 
-// Exported for the self-check in tools/gesture-selfcheck.mjs.
-export const __test = { extendedCount, dist };
+// Exported for the self-check in tools/gesture-selfcheck.mjs. `reset` clears the
+// module-level dwell/cooldown state so each test case starts from a known point.
+export const __test = {
+  extendedCount,
+  dist,
+  classify,
+  reset(): void {
+    lastFireAt = 0;
+    stableCount = 0;
+    stableFingers = -1;
+    palmFrames = 0;
+    trail = [];
+  },
+  DWELL_FRAMES,
+  SWIPE_ARM_FRAMES,
+  COOLDOWN_MS,
+  SWIPE_DX,
+};
