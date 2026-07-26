@@ -54,8 +54,16 @@ export interface GestureActions {
 // ---- tuning knobs ------------------------------------------------------------
 // Real cameras, real lighting, real hands — these are meant to be tuned on the
 // actual driver laptop, not derived. Raise DWELL/COOLDOWN if you get false fires.
-const DETECT_HZ = 24; // inference rate; the DS + Limelight stream share this CPU
-const DWELL_FRAMES = 12; // consecutive stable frames before a finger-count fires (~0.5 s)
+// 30, matching what the camera actually delivers — getCapabilities reports frameRate
+// max 30, so asking for more only re-runs inference on repeated frames. Raised from
+// 24 on 2026-07-26 to get ~25% more samples out of a hand that sweeps into frame and
+// straight back out; a recorded entry lasts only 270-410 ms. Measured inference is
+// p50 7.9 ms / p90 10.6 ms, against a 33 ms budget at 30 Hz.
+const DETECT_HZ = 30; // inference rate; the DS + Limelight stream share this CPU
+// Scaled with DETECT_HZ (12 -> 15) purely to PRESERVE the tuned ~0.5 s dwell. Left
+// at 12 it would have become 400 ms and made the finger-count gestures twitchier,
+// which nobody asked for.
+const DWELL_FRAMES = 15; // consecutive stable frames before a finger-count fires (~0.5 s)
 const COOLDOWN_MS = 900; // after a finger-count fire, so one gesture = one action
 const MIN_CONFIDENCE = 0.6;
 
