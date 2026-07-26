@@ -124,9 +124,15 @@ function groupForSide(api: DockviewApi, side: 'left' | 'right'): DockviewGroupPa
   return side === 'left' ? groups[0] : groups[groups.length - 1];
 }
 
-// Step the active tab WITHIN one side's group, wrapping inside that group only.
-// This is what stops a gesture crossing between the two halves: it never touches
-// api.moveToNext, which walks the whole dock regardless of groups.
+// Step the active tab WITHIN one side's group. This is what stops a gesture crossing
+// between the two halves: it never touches api.moveToNext, which walks the whole dock
+// regardless of groups.
+//
+// CLAMPS at the ends, it does not wrap. With tabs 1-2-3, swiping past 3 stays on 3
+// and swiping back past 1 stays on 1 — a swipe can never jump the whole width of the
+// group. Same rule in both directions and on both sides. Requested 2026-07-26:
+// wrapping made a single overshoot land at the far end, which reads as the panel
+// having jumped somewhere random rather than as hitting a limit.
 function cycleSide(api: DockviewApi, side: 'left' | 'right', step: 1 | -1): void {
   const group = groupForSide(api, side);
   if (!group) return;
@@ -134,10 +140,12 @@ function cycleSide(api: DockviewApi, side: 'left' | 'right', step: 1 | -1): void
   if (panels.length === 0) return;
   const current = group.activePanel;
   const i = current ? panels.indexOf(current) : 0;
-  // Wrap within the group. Modulo is written the long way because JS % keeps the
-  // sign of the dividend, so a step of -1 at index 0 would otherwise go negative.
-  const next = panels[(((i + step) % panels.length) + panels.length) % panels.length];
-  next?.api.setActive();
+  const next = i + step;
+  if (next < 0 || next >= panels.length) {
+    console.log(`[gesture] ${side}: already at the ${step > 0 ? 'last' : 'first'} tab`);
+    return;
+  }
+  panels[next]?.api.setActive();
 }
 
 // ---- pinch-drag: move a tab between the two halves --------------------------
