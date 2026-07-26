@@ -273,12 +273,18 @@ function wireKeybinds(api: DockviewApi): void {
   });
 }
 
-// Webcam gesture control. Same three focus actions as the keybinds above, so the
-// safety argument is identical — gestures can't click anything. Deliberately NOT
-// persisted: it re-arms only when someone presses the button, so the app never
-// boots at a competition with the camera already live.
+// Webcam gesture control. The focus actions carry the same safety argument as the
+// keybinds above — they can't click anything; pinch drag is the one exception and is
+// documented in gestures.ts.
+//
+// Both toggles persist. `gesturesOn` DEFAULTS TO TRUE, so the app arms the camera at
+// launch — asked for 2026-07-26, and a deliberate reversal of the original "never
+// boot with the camera live" stance. Turning it off in the top bar is remembered.
+// `previewOn` defaults to false: the thumbnail is opt-in, and it is still forced
+// visible whenever the camera is live and the user has asked to see it.
 function wireGestures(api: DockviewApi): void {
   const btn = el<HTMLButtonElement>('btn-gestures');
+  const previewBtn = el<HTMLButtonElement>('btn-preview');
   const badge = el('gesture-badge');
   const preview = el<HTMLVideoElement>('gesture-preview');
 
@@ -309,15 +315,14 @@ function wireGestures(api: DockviewApi): void {
     btn.classList.toggle('tbtn-accent', isRunning());
     btn.textContent = isRunning() ? 'Gestures ON' : 'Gestures';
     document.body.classList.toggle('gestures-on', isRunning());
+    const showPreview = getSettings().previewOn;
+    previewBtn.classList.toggle('tbtn-accent', showPreview);
+    document.body.classList.toggle('preview-on', showPreview);
+    // The thumbnail is only meaningful while the camera is actually running.
+    previewBtn.disabled = !isRunning();
   };
 
-  btn.addEventListener('click', () => {
-    if (isRunning()) {
-      stopGestures();
-      cancelDrag(); // never leave a half-finished grab behind
-      render();
-      return;
-    }
+  const arm = (): void => {
     btn.disabled = true;
     void startGestures(actions, preview)
       .catch((err: unknown) => {
@@ -330,9 +335,26 @@ function wireGestures(api: DockviewApi): void {
         btn.disabled = false;
         render();
       });
+  };
+
+  btn.addEventListener('click', () => {
+    const nowOn = !isRunning();
+    if (!nowOn) {
+      stopGestures();
+      cancelDrag(); // never leave a half-finished grab behind
+      render();
+    } else {
+      arm();
+    }
+    void updateSettings({ gesturesOn: nowOn });
+  });
+
+  previewBtn.addEventListener('click', () => {
+    void updateSettings({ previewOn: !getSettings().previewOn }).then(render);
   });
 
   render();
+  if (getSettings().gesturesOn) arm();
 }
 
 // "+ Panels" top-bar menu: lists every registry panel; click opens/focuses it.
@@ -482,6 +504,10 @@ function wireDockStrip(): void {
   const strip = el('dock-strip');
   const report = (): void => {
     const r = strip.getBoundingClientRect();
+    // Publish the live strip height so the gesture thumbnail can sit ABOVE it. The
+    // docked Driver Station is a reparented native Win32 window that paints over any
+    // z-index, so a thumbnail inside the strip would vanish exactly when the DS is up.
+    document.documentElement.style.setProperty('--dock-strip-h', `${Math.round(r.height)}px`);
     // Logged so the dock-zone plumbing stays verifiable from stdout (dsdock depends on it).
     console.log(
       `[dock-strip] zone rect ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`,

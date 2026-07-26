@@ -43,6 +43,8 @@ const DEFAULTS: Settings = {
   simMode: false,
   limelightHost: '10.97.4.11',
   station: 'B1',
+  gesturesOn: true,
+  previewOn: false,
 };
 
 const VALID_STATIONS: Station[] = ['R1', 'R2', 'R3', 'B1', 'B2', 'B3'];
@@ -71,6 +73,10 @@ function sanitize(s: Settings): Settings {
     limelightHost:
       typeof s.limelightHost === 'string' && s.limelightHost ? s.limelightHost : DEFAULTS.limelightHost,
     station: VALID_STATIONS.includes(s.station) ? s.station : DEFAULTS.station,
+    // Compared against false, not Boolean(): this defaults to TRUE, so a missing key
+    // in an older settings.json must not read as "off".
+    gesturesOn: s.gesturesOn !== false,
+    previewOn: Boolean(s.previewOn),
     // Pass the dockview layout through untouched (opaque to main). Without this the
     // fixed-shape return would strip it and the layout would never persist.
     layout: s.layout,

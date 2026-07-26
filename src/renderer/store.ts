@@ -6,6 +6,10 @@ export type Settings = {
   simMode: boolean;
   limelightHost: string;
   station: Station;
+  /** Arm gesture control at launch. Default TRUE — see the caveat in gestures.ts. */
+  gesturesOn: boolean;
+  /** Show the camera framing thumbnail. Default FALSE. */
+  previewOn: boolean;
   // Opaque dockview layout blob (SerializedDockview from api.toJSON()); persisted
   // verbatim. Kept `unknown` so store/main stay decoupled from dockview's types.
   layout?: unknown;

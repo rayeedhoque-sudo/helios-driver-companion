@@ -1176,15 +1176,17 @@ button {
   opacity: 1;
 }
 
-/* Framing preview: only shown while armed, so the camera is never live-but-invisible.
-   Anchored under the top bar, NOT bottom-right — the docked Driver Station is a
-   reparented native Win32 window in the bottom strip and would paint straight over
-   it (z-index can't beat a native window), hiding the one cue that the camera is on. */
+/* Framing preview: shown only when the camera is armed AND the thumbnail is toggled
+   on, so it can never be live-but-invisible.
+   Bottom-right, lifted clear of the DS dock strip. --dock-strip-h is published by
+   app.ts from the strip's live height: the docked Driver Station is a reparented
+   native Win32 window that paints over any z-index, so sitting inside the strip
+   would hide the preview exactly when the DS is in use. */
 #gesture-preview {
   display: none;
   position: fixed;
   right: 10px;
-  top: calc(var(--topbar-h) + 10px);
+  bottom: calc(var(--dock-strip-h, 24px) + 10px);
   width: 160px;
   border-radius: 8px;
   border: 1px solid var(--accent);
@@ -1192,7 +1194,7 @@ button {
   z-index: 40;
   pointer-events: none;
 }
-body.gestures-on #gesture-preview {
+body.gestures-on.preview-on #gesture-preview {
   display: block;
 }
 
