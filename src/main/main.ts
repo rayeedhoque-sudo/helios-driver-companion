@@ -15,6 +15,7 @@ import {
   type DsStatus,
 } from './dsdock';
 import { initDeploy, startDeploy, cancelDeploy, getStatus as getDeployStatus, killDeployOnQuit } from './deploy';
+import { saveGains } from './tuning';
 
 // M3 DS dock requirement: a reparented GDI window (the LabVIEW Driver
 // Station) can only composite inside our window if the window has a classic
@@ -321,6 +322,10 @@ function registerIpc(): void {
   ipcMain.handle('deploy:start', (_e, target) => startDeploy(target));
   ipcMain.handle('deploy:cancel', () => cancelDeploy());
   ipcMain.handle('deploy:status', () => getDeployStatus());
+
+  // Bake tuned PID gains into the robot project's SubsystemConstants.java. Editing only —
+  // never deploys, and the path comes from deploy.ts's hardcoded PROJECT_DIRS, not the payload.
+  ipcMain.handle('tuning:save', (_e, target, gains) => saveGains(target, gains));
 }
 
 // --- lifecycle + restore safety hooks --------------------------------------

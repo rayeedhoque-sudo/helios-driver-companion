@@ -106,6 +106,21 @@ const HUB_BLUE = { x: 4.6255, y: 4.0346 };
 const HUB_RED = { x: 11.9155, y: 4.0346 };
 const HUB_GLOW_RADIUS_M = 0.9; // hub footprint is 47 in square (~0.6 m half-width) + margin
 
+// AprilTag field positions (blue-origin meters) from WPILib apriltag-java 2026.2.1
+// `2026-rebuilt-welded.json` — same layout FieldConstants.java is derived from.
+// Only x/y are kept; the field view is 2-D.
+const TAG_XY: [number, number, number][] = [
+  [1, 11.878, 7.425], [2, 11.915, 4.638], [3, 11.312, 4.390], [4, 11.312, 4.035],
+  [5, 11.915, 3.431], [6, 11.878, 0.644], [7, 11.953, 0.644], [8, 12.271, 3.431],
+  [9, 12.519, 3.679], [10, 12.519, 4.035], [11, 12.271, 4.638], [12, 11.953, 7.425],
+  [13, 16.533, 7.403], [14, 16.533, 6.972], [15, 16.533, 4.324], [16, 16.533, 3.892],
+  [17, 4.663, 0.644], [18, 4.626, 3.431], [19, 5.229, 3.679], [20, 5.229, 4.035],
+  [21, 4.626, 4.638], [22, 4.663, 7.425], [23, 4.588, 7.425], [24, 4.270, 4.638],
+  [25, 4.022, 4.390], [26, 4.022, 4.035], [27, 4.270, 3.431], [28, 4.588, 0.644],
+  [29, 0.008, 0.666], [30, 0.008, 1.098], [31, 0.008, 3.746], [32, 0.008, 4.178],
+];
+let showTags = true; // field-panel overlay toggle, in-memory only
+
 // ---- steer-desync watch (ModuleTargets vs ModuleStates) -----------------------
 // A sustained gap between where a module is COMMANDED to point and where it actually
 // points = dead steer motor / wrong CANcoder offset — visible in seconds during a
@@ -526,6 +541,18 @@ export function mountField(container: HTMLElement): void {
   toggle.classList.toggle('active', driverPerspective);
   container.appendChild(toggle);
 
+  const tagsBtn = document.createElement('button');
+  tagsBtn.className = 'pane-toggle field-tags-toggle';
+  tagsBtn.title = 'Show AprilTag IDs';
+  tagsBtn.textContent = 'TAGS';
+  tagsBtn.classList.toggle('active', showTags);
+  container.appendChild(tagsBtn);
+  tagsBtn.addEventListener('click', () => {
+    showTags = !showTags;
+    tagsBtn.classList.toggle('active', showTags);
+    markDirty();
+  });
+
   // Station picker overlay (moved out of the top bar into the field, top-left edge).
   buildStationPicker(container);
 
@@ -606,6 +633,7 @@ function draw(): void {
   ctx.closePath();
   ctx.stroke();
 
+  drawTags();
   drawHubGlow(); // under everything mobile — it's field surface state
   drawYouMarker();
   drawTrail();
@@ -641,6 +669,47 @@ function drawFieldImage(): void {
   ctx.transform(ux, uy, vx, vy, origin.x, origin.y);
   ctx.drawImage(fieldImg, CROP.sx, CROP.sy, CROP.sw, CROP.sh, 0, 0, CROP.sw, CROP.sh);
   ctx.restore();
+}
+
+// AprilTag markers: a dot at each tag with its ID. Hub tags get their number pushed
+// radially OUTSIDE the hub (so you read which face it's on at a glance); every other
+// tag is nudged toward field center so wall tags stay on screen. Labels draw upright
+// in both orientations.
+const TAG_LABEL_HUB_R_M = 1.25; // label ring radius from hub center — outside the hub box
+function drawTags(): void {
+  if (!ctx || !showTags) return;
+  ctx.font = '700 9px "Bahnschrift", sans-serif';
+  ctx.textAlign = 'center';
+  for (const [id, xM, yM] of TAG_XY) {
+    const c = fieldToCanvasAt(layout, xM, yM);
+    const hub = xM < FIELD_W_M / 2 ? HUB_BLUE : HUB_RED;
+    const dx = xM - hub.x;
+    const dy = yM - hub.y;
+    const r = Math.hypot(dx, dy);
+    let labX: number;
+    let labY: number;
+    if (r < 1.2) {
+      // Hub face tag: push the number straight out past the hub along its own radial.
+      labX = hub.x + (dx / r) * TAG_LABEL_HUB_R_M;
+      labY = hub.y + (dy / r) * TAG_LABEL_HUB_R_M;
+    } else {
+      labX = xM + (xM < FIELD_W_M / 2 ? 0.45 : -0.45);
+      labY = yM + (yM < FIELD_H_M / 2 ? 0.45 : -0.45);
+    }
+    const lab = fieldToCanvasAt(layout, labX, labY);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(12,9,20,0.75)';
+    const w = ctx.measureText(String(id)).width + 7;
+    ctx.beginPath();
+    ctx.roundRect(lab.x - w / 2, lab.y - 7, w, 13, 6);
+    ctx.fill();
+    ctx.fillStyle = '#f2eef8';
+    ctx.fillText(String(id), lab.x, lab.y + 3.5);
+  }
+  ctx.textAlign = 'start';
 }
 
 function drawTrail(): void {

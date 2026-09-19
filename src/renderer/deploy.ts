@@ -9,17 +9,24 @@ import type { DeployStatus, DeployTarget } from '../main/preload';
 
 const MAX_LOG_LINES = 2000;
 
-// V1/V2 project selector. Labels + paths are display-only; the actual deploy
-// path is resolved from the KEY inside main/deploy.ts (PROJECT_DIRS) — the
-// renderer only ever sends the key. V1 (proven) is the default; V2 is the clean
-// re-architecture (behaviorally identical but not yet on-robot-verified).
+// Project selector. Labels + paths are display-only; the actual deploy path is
+// resolved from the KEY inside main/deploy.ts (PROJECT_DIRS) — the renderer only
+// ever sends the key. V1 is the only project since the V2 tree was deleted.
 const TARGETS: { key: DeployTarget; label: string; path: string }[] = [
   { key: 'v1', label: 'V1 — Helios-2026 (proven)', path: 'C:\\FRC\\Helios-2026' },
-  { key: 'v2', label: 'V2 — Helios-2026-V2 (re-architected)', path: 'C:\\FRC\\Helios-2026-V2' },
 ];
 let selectedTarget: DeployTarget = 'v1';
 function targetPath(key: DeployTarget): string {
   return TARGETS.find((t) => t.key === key)?.path ?? TARGETS[0].path;
+}
+
+// The project the PID panel bakes tuned gains into — always the one this dropdown would
+// deploy, so "Save to Constants" always targets the project you are actually running.
+export function currentDeployTarget(): DeployTarget {
+  return selectedTarget;
+}
+export function currentDeployPath(): string {
+  return targetPath(selectedTarget);
 }
 
 // ---- module-scope state (persists across mount/unmount) --------------------
@@ -104,7 +111,7 @@ function build(container: HTMLElement): void {
   cancel.addEventListener('click', onCancelClick);
   cancelEl = cancel;
 
-  // V1/V2 project selector.
+  // Project selector.
   const selLabel = document.createElement('span');
   selLabel.className = 'dpl-select-label';
   selLabel.textContent = 'Project:';

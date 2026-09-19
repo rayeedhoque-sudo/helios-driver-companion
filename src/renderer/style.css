@@ -442,6 +442,16 @@ button {
   background: rgba(11, 8, 18, 0.72);
 }
 
+/* AprilTag ID overlay toggle — bottom-right so it clears the orientation toggle and
+   the vision badge stacked at the canvas's top-right. */
+.field-tags-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 2;
+  background: rgba(11, 8, 18, 0.72);
+}
+
 /* ---- dock strip ---------------------------------------------------------- */
 #dock-strip {
   min-height: 24px;

@@ -2,12 +2,13 @@
   "name": "helios-driver-companion",
   "version": "0.1.0",
   "private": true,
-  "description": "Helios Driver Companion — single-window driver dashboard for FRC Team 9704.",
+  "description": "Helios Driver Companion \u2014 single-window driver dashboard for FRC Team 9704.",
   "main": "dist/main.cjs",
   "scripts": {
     "build": "node build.mjs",
     "start": "node build.mjs && electron .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "node -e \"require('esbuild').buildSync({entryPoints:['tools/tuning-check.ts'],bundle:true,platform:'node',outfile:'dist/tuning-check.cjs'})\" && node dist/tuning-check.cjs"
   },
   "devDependencies": {
     "electron": "^43.1.0",

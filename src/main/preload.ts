@@ -3,8 +3,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Settings } from '../renderer/store';
 import type { DsStatus } from './dsdock';
 import type { DeployActionResult, DeployStatus, DeployTarget } from './deploy';
+import type { SaveResult } from './tuning';
 
-export type { DsStatus, Settings, DeployActionResult, DeployStatus, DeployTarget };
+export type { DsStatus, Settings, DeployActionResult, DeployStatus, DeployTarget, SaveResult };
 
 export interface CompanionApi {
   getSettings(): Promise<Settings>;
@@ -24,6 +25,10 @@ export interface CompanionApi {
     status(): Promise<DeployStatus>;
     onOutput(cb: (chunk: string) => void): void;
     onDone(cb: (code: number | null) => void): void;
+  };
+  tuning: {
+    /** Bake the given {constantName: value} gains into the project's SubsystemConstants.java. */
+    save(target: DeployTarget, gains: Record<string, number>): Promise<SaveResult>;
   };
 }
 
@@ -53,6 +58,9 @@ const api: CompanionApi = {
     onDone: (cb) => {
       ipcRenderer.on('deploy:done', (_e, code: number | null) => cb(code));
     },
+  },
+  tuning: {
+    save: (target, gains) => ipcRenderer.invoke('tuning:save', target, gains),
   },
 };
 

@@ -4,8 +4,8 @@
 // main.ts (see ARCHITECTURE.md "Deploy (main) + IPC").
 //
 // Spawn is a FIXED argv (`cmd.exe /c gradlew.bat deploy`, cwd = the robot
-// project, shell:false). The renderer's V1/V2 dropdown sends only a KEY
-// ('v1'|'v2') that is validated against the PROJECT_DIRS map below — the cwd
+// project, shell:false). The renderer's project dropdown sends only a KEY
+// ('v1') that is validated against the PROJECT_DIRS map below — the cwd
 // and gradlew path are still built from HARDCODED constants, never from user
 // free-text, so there is still nothing to sanitize in the command. Deliberately
 // not templated to keep it that way. Single-flight: only one run at a time (see
@@ -15,18 +15,17 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 
 // Deploy targets: a FIXED map of allowed project keys -> hardcoded absolute
-// project dirs. V1 is the proven, on-robot-tuned tree; V2 is the clean
-// re-architecture (behaviorally identical, but not yet on-robot-verified) —
-// so V1 is the default and V2 must be chosen deliberately in the dropdown.
-export type DeployTarget = 'v1' | 'v2';
+// project dirs. V1 is the only project now — the V2 re-architecture tree was
+// deleted 2026-08-27. The map/key indirection stays so an unknown IPC key still
+// falls back to V1 rather than reaching spawn as a path.
+export type DeployTarget = 'v1';
 const PROJECT_DIRS: Record<DeployTarget, string> = {
   v1: 'C:\\FRC\\Helios-2026',
-  v2: 'C:\\FRC\\Helios-2026-V2',
 };
 export const DEFAULT_TARGET: DeployTarget = 'v1';
 // Resolve a key to its hardcoded path, falling back to the default for any
 // unknown/absent key (so a bad IPC payload can never reach spawn as a path).
-function projectDirFor(target: DeployTarget | undefined): string {
+export function projectDirFor(target: DeployTarget | undefined): string {
   return (target && PROJECT_DIRS[target]) || PROJECT_DIRS[DEFAULT_TARGET];
 }
 

@@ -103,6 +103,17 @@ export function ntPublish(topic: string, typeStr: string, value: unknown): void 
   client.addSample(topic, value);
 }
 
+// Publish WITHOUT the reconnect-replay cache above — fire-and-forget, and a write made while
+// disconnected is simply lost. Use this for values the ROBOT owns the default of. Live PID
+// gains (/Tuning/*) are re-seeded from Constants on every robot boot, so replaying the last
+// typed value on reconnect would silently push the PREVIOUS session's gain onto a freshly
+// booted robot, with an ordering race against the robot's own seed deciding the winner.
+export function ntPublishVolatile(topic: string, typeStr: string, value: unknown): void {
+  if (!client) return;
+  client.publishTopic(topic, typeStr); // idempotent for an already-published topic
+  client.addSample(topic, value);
+}
+
 // (Re)connect to an NT4 server, idempotent on the same host.
 export function ntConnect(host: string): void {
   if (client && host === currentHost) return;

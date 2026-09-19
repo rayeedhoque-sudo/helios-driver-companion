@@ -35,6 +35,7 @@ FROZEN — see that section). Follow-up agents fill panel **internals only** (th
 | `src/renderer/graphs.ts` | done | two uPlot panels (voltage / current) |
 | `src/renderer/recorder.ts` | done | motor recorder panel (record + review volts/amps of one motor) |
 | `src/renderer/panels.ts` | done | power, vision-link, mechanisms, auto-chooser panels |
+| `src/renderer/shooter.ts` | done | shooter diagnostic panel (live hood angle + derived last-move/drift/rate, live flywheel RPM); read-only NT |
 | `src/renderer/limelight.ts` | done | MJPEG stream + overlay panel |
 | `src/renderer/deploy.ts` | done | deploy panel (button, live log, status) |
 | `src/main/deploy.ts` | done | `gradlew deploy` child-process spawn/cancel/quit-kill |
