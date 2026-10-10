@@ -24,8 +24,9 @@ const stub = {
         export const updateSettings=async()=>{};
         export const onValue=()=>()=>{};
         export const onConnection=()=>{};
+        export const ntPublish=()=>{};
         export const decodeSwerveModuleStates=()=>[];
-        export const TOPICS={pose:'',moduleStates:'',isRedAlliance:'',stationNumber:'',fmsControl:''};
+        export const TOPICS={pose:'',moduleStates:'',isRedAlliance:'',stationNumber:'',fmsControl:'',startSpot:''};
       `,
       loader: 'js',
     }));

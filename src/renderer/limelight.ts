@@ -28,6 +28,7 @@
 // is dead, and the existing bounded-retry/idle machinery below takes over on
 // the visible element exactly as before.
 import { onSettings, getSettings } from './store';
+import { mountVision } from './panels';
 import { onValue, onConnection, TOPICS } from './nt';
 
 const RETRY_MS = 2000; // reconnect cadence while cycling
@@ -88,7 +89,15 @@ export function mountLimelight(container: HTMLElement): void {
   });
   refreshBtn.addEventListener('click', () => startCycle());
 
-  container.append(img, overlay, paneStat, refreshBtn);
+  // Stream + its overlays fill the top; the vision/link diagnostics (formerly the
+  // separate Vision Link tab) sit in a strip along the bottom.
+  const view = document.createElement('div');
+  view.className = 'll-view';
+  view.append(img, overlay, paneStat, refreshBtn);
+  const diag = document.createElement('div');
+  diag.className = 'll-diag';
+  container.append(view, diag);
+  mountVision(diag);
   ctx = overlay.getContext('2d');
 
   img.addEventListener('load', onFrame);

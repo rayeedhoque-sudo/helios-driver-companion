@@ -34,9 +34,10 @@ FROZEN — see that section). Follow-up agents fill panel **internals only** (th
 | `src/renderer/field.ts` | done | field render + steer-desync watch; `mountLaptopMap` = Orientation radar (implemented) |
 | `src/renderer/graphs.ts` | done | two uPlot panels (voltage / current) |
 | `src/renderer/recorder.ts` | done | motor recorder panel (record + review volts/amps of one motor) |
-| `src/renderer/panels.ts` | done | power, vision-link, mechanisms, auto-chooser panels |
+| `src/renderer/panels.ts` | done | power, mechanisms, auto-chooser panels + the vision strip in the Limelight panel |
 | `src/renderer/shooter.ts` | done | shooter diagnostic panel (live hood angle + derived last-move/drift/rate, live flywheel RPM); read-only NT |
 | `src/renderer/limelight.ts` | done | MJPEG stream + overlay panel |
+| `src/renderer/planner.ts` | done | Path Planner panel: vendored BLine Web editor (`vendor/bline-web` → `dist/bline-web`) in an iframe; offline |
 | `src/renderer/deploy.ts` | done | deploy panel (button, live log, status) |
 | `src/main/deploy.ts` | done | `gradlew deploy` child-process spawn/cancel/quit-kill |
 
@@ -263,7 +264,7 @@ Rules for follow-up agents:
   size-dependent code must tolerate 0×0 and recover via its ResizeObserver.
 - Current ids: `limelight`, `field`, `laptop-map` (Orientation radar),
   `graph-voltage`, `graph-current`, `power`, `mechanisms`, `auto-chooser`,
-  `vision-link`, `deploy`, `controls` (static Xbox-bindings reference —
+  `deploy`, `controls` (static Xbox-bindings reference —
   KEEP IN SYNC with RobotContainer.configureBindings(); starts closed),
   `motor-recorder` (starts closed — see below).
 
@@ -296,7 +297,7 @@ uPlots from that state. Styles are an injected `<style id="rec-styles">`
   dockview behaviors — no custom code). Theme: vendored `dockview.css` +
   `.dockview-theme-dark` CSS-variable overrides in style.css (Helios dark).
 - **Default layout** (`defaultLayout()`): limelight (~40 %) | field | right column
-  (~22 %): power / {graph-voltage + graph-current tabs} / {mechanisms + vision-link
+  (~22 %): power / {graph-voltage + graph-current tabs} / {mechanisms
   + auto-chooser tabs}. `laptop-map` and `deploy` start closed.
 - **Persistence**: `onDidLayoutChange` → debounced 400 ms →
   `updateSettings({ layout: api.toJSON() })`. Boot: `restoreLayout()` tries

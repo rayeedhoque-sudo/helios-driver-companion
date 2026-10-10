@@ -53,7 +53,7 @@ export function onConnection(cb: (s: ConnState) => void): () => void {
 
 // The RTT number only exists after the first timestamp round-trip, which lands AFTER
 // onConnect fires — and it drifts as the network changes. Refresh listeners once a
-// second while connected so the top-bar pip / vision-link readout show a live value
+// second while connected so the top-bar pip / Limelight-panel link readout show a live value
 // instead of the '— ms' captured at connect time.
 setInterval(() => {
   if (connected) notifyConn();
@@ -103,16 +103,6 @@ export function ntPublish(topic: string, typeStr: string, value: unknown): void 
   client.addSample(topic, value);
 }
 
-// Publish WITHOUT the reconnect-replay cache above — fire-and-forget, and a write made while
-// disconnected is simply lost. Use this for values the ROBOT owns the default of. Live PID
-// gains (/Tuning/*) are re-seeded from Constants on every robot boot, so replaying the last
-// typed value on reconnect would silently push the PREVIOUS session's gain onto a freshly
-// booted robot, with an ordering race against the robot's own seed deciding the winner.
-export function ntPublishVolatile(topic: string, typeStr: string, value: unknown): void {
-  if (!client) return;
-  client.publishTopic(topic, typeStr); // idempotent for an already-published topic
-  client.addSample(topic, value);
-}
 
 // (Re)connect to an NT4 server, idempotent on the same host.
 export function ntConnect(host: string): void {
@@ -198,6 +188,7 @@ export const TOPICS = {
   moduleTargets: '/DriveState/ModuleTargets', // struct:SwerveModuleState[] raw (CTRE commanded states)
   isRedAlliance: '/FMSInfo/IsRedAlliance',
   stationNumber: '/FMSInfo/StationNumber',
+  startSpot: '/Companion/StartSpot', // string, published BY the companion: robot resets its pose here at auto start
   fmsControl: '/FMSInfo/FMSControlData', // int control word: 0x10 = FMS attached, 0x20 = DS attached
   autoChooser: '/SmartDashboard/Auto Chooser', // subkeys /options /default /active /selected
   telemetry: '/CompanionTelemetry', // subkeys /names /stator /supply /temp /volts /voltage

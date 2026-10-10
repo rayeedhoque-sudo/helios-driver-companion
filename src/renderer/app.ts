@@ -91,7 +91,6 @@ function defaultLayout(api: DockviewApi): void {
   const volt = api.addPanel({ ...addPanelOpts('graph-voltage'), position: { referencePanel: 'power', direction: 'below' } });
   api.addPanel({ ...addPanelOpts('graph-current'), position: { referencePanel: 'graph-voltage', direction: 'within' } });
   api.addPanel({ ...addPanelOpts('mechanisms'), position: { referencePanel: 'graph-voltage', direction: 'below' } });
-  api.addPanel({ ...addPanelOpts('vision-link'), position: { referencePanel: 'mechanisms', direction: 'within' } });
   api.addPanel({ ...addPanelOpts('auto-chooser'), position: { referencePanel: 'mechanisms', direction: 'within' } });
 
   // Column widths / right-column row heights, from the live container size.

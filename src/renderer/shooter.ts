@@ -1,49 +1,46 @@
-// Shooter diagnostic panel: live hood angle (and what it just did) + live flywheel RPM.
+// Shooter diagnostic panel for the V2 launcher (2026-09-30): flywheel speed in the same
+// FLYWHEEL RPM the DPAD sets, the feeder, the belt gate RT waits on, and the hood (degrees
+// above the bottom stop it homes into on every enable).
 //
-// Built for the 2026-08-28 hood sessions, where the question is always the same one and
-// Shuffleboard cannot answer it: the driver presses DPAD-RIGHT -- did the hood MOVE, did it
-// move the amount that was asked for, and did it STAY there? A single "Current Angle" number
-// ticking over answers none of that. So this panel derives three things the robot does not
-// publish:
+// The hood card also derives what Shuffleboard can't show:
+//   LAST MOVE   how far the hood travelled during the last continuous motion (deg).
+//   DRIFT       how far it has crept since that motion ended (deg) -- growing while parked
+//               means it is sagging.
+//   RATE        deg/s right now -- separates "parked" from "creeping".
 //
-//   LAST MOVE   how far the hood travelled during the last continuous motion, so a 5-unit
-//               press that actually swings 25-55 units (see HOOD_UP_STEP_UNITS) is visible
-//               as the number it really is.
-//   DRIFT       how far it has crept since that motion ended. This is the droop the position
-//               loop deliberately no longer chases -- if it grows while parked, the hood is
-//               sagging, and that is a mechanical/holding-current problem, not a gain.
-//   RATE        units/s right now, which is what separates "parked" from "creeping".
-//
-// Read-only: this panel subscribes and never publishes. Everything comes off topics the robot
-// already writes every loop, so there is no robot-code change behind it.
+// Read-only: this panel subscribes and never publishes. Everything comes off topics
+// LauncherSubsystem writes every loop.
 import { onValue, onConnection } from './nt';
 
 // FULL topic paths, not a discovered prefix -- Shuffleboard entry names contain spaces and
 // parentheses, and NT4 topic discovery on this stack does not enumerate them reliably.
 const TAB = '/Shuffleboard/Shooter Subsystem Tab/';
-const T_ANGLE = TAB + 'Current Angle';
+const T_ANGLE = TAB + 'Current Angle';                 // deg above the homed bottom stop
 const T_ANGLE_TARGET = TAB + 'Desired Angle';
 const T_ANGLE_REACHED = TAB + 'Desired Angle Reached';
-const T_RPM = TAB + 'Current Flywheel (motor RPM)';
-const T_RPM_TARGET = TAB + 'RT Target (motor RPM)';
 const T_HOOD_VOLTS = TAB + 'Hood Volts (cmd)';
 const T_HOOD_AMPS = TAB + 'Hood Current (A)';
-const T_RAW = TAB + 'Hood Encoder Raw (rot)';
-// The datum the robot re-captures on every enable rising edge (ShooterSubsystem.periodic).
-// Angle is SHOWN relative to it so the hood reads 0 at enable, matching what the driver is
-// actually asked to trim. Motion tracking below still runs on the absolute angle -- the datum
-// jumps at enable and a relative feed would fake a giant "move" out of that jump.
-const T_BASE = TAB + 'Hood Base Angle (deg)';
+const T_RAW = TAB + 'Hood Encoder Raw (rot)';          // X44 rotor rotations
+const T_HOOD_STATE = TAB + 'Hood State';               // WAITING_FOR_ENABLE/HOMING/HOMED/HOMING_FAILED/STALL_FAULT
+const T_HOMING_TRAVEL = TAB + 'Hood Homing Travel (deg)';
+const T_FLY = TAB + 'Current Velocity';                // FLYWHEEL rpm (what the DPAD sets)
+const T_FLY_TARGET = TAB + 'Desired Velocity';         // FLYWHEEL rpm target
+const T_FLY_AT = TAB + 'Desired Velocity Reached';
+const T_MOTOR_RPM = TAB + 'Current Flywheel (motor RPM)';
+const T_MOTOR_TARGET = TAB + 'RT Target (motor RPM)';
+const T_FEEDER = TAB + 'Feeder (motor RPM)';
+const T_FEEDER_AT = TAB + 'Feeder At Speed';
+const T_READY = TAB + 'Ready To Feed (belts on)';
+const T_SHOOTING = TAB + 'Subsystem State';            // true while RT is held
 
-// Motion thresholds. The hood encoder is noisy at ~0.2 raw units (HOOD_RAW_NOISE_DEADBAND on
-// the robot), so "moving" has to sit clear of that: 3 units/s is well above sensor jitter and
-// well below the 1250+ units/s a powered stroke reaches.
-const MOVING_UNITS_PER_SEC = 3;
+// Motion threshold: 3 deg/s is well above encoder jitter and well below a powered move
+// (Motion Magic cruises at ~90 deg/s).
+const MOVING_DEG_PER_SEC = 3;
 // A stroke is only OVER once the hood has been quiet for this long -- without the debounce the
 // zero-crossing mid-stroke would split one press into two "moves".
 const SETTLE_MS = 250;
-// Hood current above this while parked means something is being held/stalled, not resting.
-const HOOD_IDLE_AMPS = 1.0;
+// Hood current worth flagging (the robot's own stall cutoff trips at 18 A for 0.5 s).
+const HOOD_WARN_AMPS = 15;
 
 // ---- module-scope state (persists across mount/unmount; NT4 won't replay to fresh DOM) ----
 let connected = false;
@@ -52,17 +49,25 @@ let subsMade = false;
 let angle: number | null = null;
 let angleTarget: number | null = null;
 let angleReached = false;
-let rpm: number | null = null;
-let rpmTarget: number | null = null;
+let rpm: number | null = null;        // flywheel rpm
+let rpmTarget: number | null = null;  // flywheel rpm target
+let flyAt = false;
+let motorRpm: number | null = null;
+let motorTarget: number | null = null;
+let feederRpm: number | null = null;
+let feederAt = false;
+let ready = false;
+let shooting = false;
+let hoodState: string | null = null;
+let homingTravel: number | null = null;
 let hoodVolts = 0;
 let hoodAmps = 0;
 let raw: number | null = null;
-let base = 0; // enable-time datum; 0 before the robot has captured one
 
 // Motion tracking, all derived here from the angle samples.
 let lastAngle: number | null = null;
 let lastStampUs: number | null = null;
-let rate = 0; // raw units per second
+let rate = 0; // deg per second
 let moving = false;
 let moveStartAngle: number | null = null; // angle when the current stroke began
 let lastMove: number | null = null; // travel of the last completed stroke
@@ -135,27 +140,38 @@ function build(container: HTMLElement): void {
   cards.className = 'sh-cards';
   container.appendChild(cards);
 
-  cards.appendChild(card('Hood Angle', 'angle', 'raw units', [
+  cards.appendChild(card('Flywheel', 'rpm', 'flywheel RPM', [
+    ['Target (DPAD)', 'rpmTarget'],
+    ['Error', 'rpmErr'],
+    ['At speed', 'flyAt'],
+    ['Motor RPM (actual / target)', 'motorRpm'],
+  ]));
+
+  cards.appendChild(card('Feed', 'feeder', 'feeder motor RPM', [
+    ['Shooting (RT held)', 'shooting'],
+    ['Feeder at speed', 'feederAt'],
+    ['Belts (flywheel AND feeder at speed)', 'ready'],
+  ]));
+
+  cards.appendChild(card('Hood Angle', 'angle', 'deg', [
+    ['State', 'hoodState'],
+    ['Target / error', 'angleErr'],
     ['Last move', 'lastMove'],
     ['Drift since parked', 'drift'],
     ['Rate', 'rate'],
-    ['Target / error', 'angleErr'],
     ['Hood volts / amps', 'hoodPower'],
-    ['Encoder raw', 'raw'],
-  ]));
-
-  cards.appendChild(card('Flywheel', 'rpm', 'motor RPM', [
-    ['RT target', 'rpmTarget'],
-    ['Error', 'rpmErr'],
+    ['Last homing travel', 'homingTravel'],
+    ['Encoder raw (motor rot)', 'raw'],
   ]));
 
   const hint = document.createElement('div');
   hint.className = 'sh-hint';
   hint.textContent =
-    'LAST MOVE is the travel of the last continuous stroke -- a DPAD press asks for '
-    + 'HOOD_UP_STEP_UNITS but one powered 20 ms loop carries the hood much further, so this is '
-    + 'the number that actually happened. DRIFT is movement since that stroke ended: the loop '
-    + 'parks on arrival and no longer chases droop, so a growing drift is mechanical.';
+    'RT: the belts run only while BOTH the flywheel and the feeder are at speed -- if the belts '
+    + 'stay off, the Feed card shows which one is holding them back. HOOD: it homes into its '
+    + 'bottom stop on every enable and ignores the DPAD until State = HOMED. A homing travel '
+    + 'near 0 means it never actually moved while homing. HOMING_FAILED / STALL_FAULT lock the '
+    + 'hood until the next disable -> enable.';
   container.appendChild(hint);
 }
 
@@ -209,7 +225,9 @@ function ensureShooterSubs(): void {
       // a different enable (the robot re-datums the hood on every enable). Keeping the old
       // "last move" across that would be a lie, so drop the lot.
       angle = angleTarget = rpm = rpmTarget = raw = null;
-      base = 0;
+      motorRpm = motorTarget = feederRpm = homingTravel = null;
+      hoodState = null;
+      flyAt = feederAt = ready = shooting = false;
       lastAngle = lastStampUs = lastMove = parkedAngle = moveStartAngle = quietSinceMs = null;
       rate = 0;
       moving = false;
@@ -224,12 +242,20 @@ function ensureShooterSubs(): void {
   });
   onValue(T_ANGLE_TARGET, (v) => { angleTarget = Number(v); render(); });
   onValue(T_ANGLE_REACHED, (v) => { angleReached = Boolean(v); render(); });
-  onValue(T_RPM, (v) => { rpm = Number(v); render(); });
-  onValue(T_RPM_TARGET, (v) => { rpmTarget = Number(v); render(); });
+  onValue(T_FLY, (v) => { rpm = Number(v); render(); });
+  onValue(T_FLY_TARGET, (v) => { rpmTarget = Number(v); render(); });
+  onValue(T_FLY_AT, (v) => { flyAt = Boolean(v); render(); });
+  onValue(T_MOTOR_RPM, (v) => { motorRpm = Number(v); render(); });
+  onValue(T_MOTOR_TARGET, (v) => { motorTarget = Number(v); render(); });
+  onValue(T_FEEDER, (v) => { feederRpm = Number(v); render(); });
+  onValue(T_FEEDER_AT, (v) => { feederAt = Boolean(v); render(); });
+  onValue(T_READY, (v) => { ready = Boolean(v); render(); });
+  onValue(T_SHOOTING, (v) => { shooting = Boolean(v); render(); });
+  onValue(T_HOOD_STATE, (v) => { hoodState = String(v); render(); });
+  onValue(T_HOMING_TRAVEL, (v) => { homingTravel = Number(v); render(); });
   onValue(T_HOOD_VOLTS, (v) => { hoodVolts = Number(v); render(); });
   onValue(T_HOOD_AMPS, (v) => { hoodAmps = Number(v); render(); });
   onValue(T_RAW, (v) => { raw = Number(v); render(); });
-  onValue(T_BASE, (v) => { base = Number(v); render(); });
 
   // The settle debounce has to expire on its own: the hood stops moving by the robot sending
   // the SAME angle over and over, and NT4 does not resend an unchanged value, so nothing would
@@ -254,7 +280,7 @@ function trackMotion(sample: number, tsUs: number): void {
   lastStampUs = tsUs;
   if (parkedAngle === null) parkedAngle = sample;
 
-  if (Math.abs(rate) >= MOVING_UNITS_PER_SEC) {
+  if (Math.abs(rate) >= MOVING_DEG_PER_SEC) {
     if (!moving) {
       moving = true;
       moveStartAngle = parkedAngle ?? sample;
@@ -286,30 +312,43 @@ function render(): void {
   if (!rootEl) return;
   renderBanner();
 
-  setBig('angle', angle === null ? null : angle - base, 1);
+  setBig('angle', angle, 1);
   setBig('rpm', rpm, 0);
-
-  set('lastMove', lastMove === null ? '--' : signed(lastMove, 1) + ' units');
-  const drift = angle !== null && parkedAngle !== null && !moving ? angle - parkedAngle : null;
-  set('drift', drift === null ? (moving ? 'moving' : '--') : signed(drift, 1) + ' units',
-    drift !== null && Math.abs(drift) >= 5 ? 'bad' : drift !== null && Math.abs(drift) >= 2 ? 'warn' : undefined);
-  set('rate', num(rate, 1) + ' u/s', moving ? 'warn' : 'faint');
-
-  const err = angle !== null && angleTarget !== null ? angleTarget - angle : null;
-  set('angleErr', angleTarget === null || err === null
-    ? '--'
-    : num(angleTarget - base, 1) + '  /  ' + signed(err, 1), angleReached ? 'ok' : undefined);
-
-  // Volts with no motion is the stall case -- the hood is a NEO 550 on a 20 A smart limit and
-  // there is no move timeout in the robot code, so flag it loudly rather than burying it.
-  const stalling = Math.abs(hoodVolts) > 0.5 && !moving && hoodAmps > HOOD_IDLE_AMPS;
-  set('hoodPower', num(hoodVolts, 2) + ' V  /  ' + num(hoodAmps, 1) + ' A',
-    stalling ? 'bad' : hoodAmps > HOOD_IDLE_AMPS ? 'warn' : undefined);
-  set('raw', raw === null ? '--' : num(raw, 2));
+  setBig('feeder', feederRpm, 0);
 
   set('rpmTarget', rpmTarget === null ? '--' : num(rpmTarget, 0) + ' RPM');
   const rpmErr = rpm !== null && rpmTarget !== null ? rpmTarget - rpm : null;
   set('rpmErr', rpmErr === null ? '--' : signed(rpmErr, 0) + ' RPM');
+  set('flyAt', flyAt ? 'YES' : 'no', flyAt ? 'ok' : 'faint');
+  set('motorRpm', motorRpm === null ? '--'
+    : num(motorRpm, 0) + ' / ' + (motorTarget === null ? '--' : num(motorTarget, 0)));
+
+  set('shooting', shooting ? 'YES' : 'no', shooting ? 'warn' : 'faint');
+  set('feederAt', feederAt ? 'YES' : 'no', feederAt ? 'ok' : 'faint');
+  set('ready', ready ? 'RUNNING' : 'held off', ready ? 'ok' : shooting ? 'warn' : 'faint');
+
+  set('hoodState', hoodState ?? '--', hoodStateLevel());
+  const err = angle !== null && angleTarget !== null ? angleTarget - angle : null;
+  set('angleErr', angleTarget === null || err === null
+    ? '--'
+    : num(angleTarget, 1) + ' deg  /  ' + signed(err, 1), angleReached ? 'ok' : undefined);
+  set('lastMove', lastMove === null ? '--' : signed(lastMove, 1) + ' deg');
+  const drift = angle !== null && parkedAngle !== null && !moving ? angle - parkedAngle : null;
+  set('drift', drift === null ? (moving ? 'moving' : '--') : signed(drift, 1) + ' deg',
+    drift !== null && Math.abs(drift) >= 2 ? 'bad' : drift !== null && Math.abs(drift) >= 1 ? 'warn' : undefined);
+  set('rate', num(rate, 1) + ' deg/s', moving ? 'warn' : 'faint');
+  set('hoodPower', num(hoodVolts, 2) + ' V  /  ' + num(hoodAmps, 1) + ' A',
+    hoodAmps >= HOOD_WARN_AMPS ? 'bad' : undefined);
+  set('homingTravel', homingTravel === null ? '--' : num(homingTravel, 1) + ' deg',
+    homingTravel !== null && Math.abs(homingTravel) < 0.5 ? 'warn' : undefined);
+  set('raw', raw === null ? '--' : num(raw, 2));
+}
+
+function hoodStateLevel(): string | undefined {
+  if (hoodState === 'HOMED') return 'ok';
+  if (hoodState === 'HOMING') return 'warn';
+  if (hoodState === 'HOMING_FAILED' || hoodState === 'STALL_FAULT') return 'bad';
+  return 'faint';
 }
 
 function renderBanner(): void {
@@ -319,15 +358,25 @@ function renderBanner(): void {
     bannerEl.dataset.level = 'bad';
     return;
   }
-  if (angle === null) {
-    bannerEl.textContent = 'Connected — waiting for the shooter tab to publish';
+  if (angle === null || hoodState === null) {
+    bannerEl.textContent = 'Connected — waiting for the launcher to publish';
     bannerEl.dataset.level = 'warn';
     return;
   }
-  const stalling = Math.abs(hoodVolts) > 0.5 && !moving && hoodAmps > HOOD_IDLE_AMPS;
-  if (stalling) {
-    bannerEl.textContent = 'Hood driven but not moving — ' + num(hoodAmps, 1) + ' A into a stalled NEO 550';
+  if (hoodState === 'HOMING_FAILED' || hoodState === 'STALL_FAULT') {
+    bannerEl.textContent = 'Hood ' + hoodState.replace('_', ' ').toLowerCase()
+      + ' — hood locked until the next disable → enable';
     bannerEl.dataset.level = 'bad';
+    return;
+  }
+  if (hoodState === 'HOMING') {
+    bannerEl.textContent = 'Hood homing — DPAD ignored until homed';
+    bannerEl.dataset.level = 'warn';
+    return;
+  }
+  if (shooting) {
+    bannerEl.textContent = ready ? 'Shooting — belts feeding' : 'Shooting — belts waiting for speed';
+    bannerEl.dataset.level = ready ? 'ok' : 'warn';
     return;
   }
   bannerEl.textContent = moving ? 'Hood moving' : 'Hood parked';

@@ -15,11 +15,11 @@
 import { mountLimelight } from './limelight';
 import { mountField, mountLaptopMap } from './field';
 import { mountVoltageGraph, mountCurrentGraph } from './graphs';
-import { mountPowerBars, mountVision, mountMechanisms, mountAutoChooser, mountControls } from './panels';
+import { mountPowerBars, mountMechanisms, mountAutoChooser, mountControls } from './panels';
 import { mountDeploy } from './deploy';
 import { mountMotorRecorder } from './recorder';
-import { mountPidTune } from './pidtune';
 import { mountShooter } from './shooter';
+import { mountPathPlanner } from './planner';
 
 export interface PanelDef {
   /** Stable id — dockview panel id + layout key. FROZEN; never rename. */
@@ -39,12 +39,11 @@ export const PANELS: readonly PanelDef[] = [
   { id: 'power', title: 'Power', mount: mountPowerBars },
   { id: 'mechanisms', title: 'Mechanisms', mount: mountMechanisms },
   { id: 'auto-chooser', title: 'Autonomous', mount: mountAutoChooser },
-  { id: 'vision-link', title: 'Vision Link', mount: mountVision },
   { id: 'deploy', title: 'Deploy', mount: mountDeploy },
   { id: 'controls', title: 'Controls', mount: mountControls },
   { id: 'motor-recorder', title: 'Motor Recorder', mount: mountMotorRecorder }, // starts closed — open via "+ Panels"
-  { id: 'pid-tune', title: 'PID Tuning', mount: mountPidTune }, // starts closed — open via "+ Panels"
   { id: 'shooter', title: 'Shooter', mount: mountShooter }, // starts closed — open via "+ Panels"
+  { id: 'path-planner', title: 'Path Planner', mount: mountPathPlanner }, // starts closed — open via "+ Panels"
 
 ];
 

@@ -213,8 +213,8 @@ function currentOpts(d: { width: number; height: number }): uPlot.Options {
     padding: [6, 6, 2, 0],
     scales: {
       x: { time: false },
-      // Auto range from the total series only, 0-anchored with a little headroom.
-      y: { range: (_u, _min, max) => [0, Math.max(20, max * 1.1)] },
+      // 0-anchored, always shows at least 0–120 A; grows past that only if a spike exceeds it.
+      y: { range: (_u, _min, max) => [0, Math.max(120, max * 1.1)] },
     },
     axes: [xAxisHidden, yAxis((v) => v.toFixed(0))],
     series: [

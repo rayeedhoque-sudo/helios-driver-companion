@@ -280,14 +280,15 @@ function dims(cell: HTMLElement): { width: number; height: number } {
   };
 }
 
-// Auto y ranges anchored at 0 (motor volts/amps go negative in reverse).
+// Y ranges anchored at 0: always show at least 0–12 V / 0–60 A, growing past that only if
+// a value exceeds it (motor volts/amps go negative in reverse, so the bottom still follows min).
 function voltRange(_u: uPlot, min: number, max: number): [number, number] {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 13];
-  return [Math.min(0, min * 1.05), Math.max(1, max * 1.05)];
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 12];
+  return [Math.min(0, min * 1.05), Math.max(12, max * 1.05)];
 }
 function ampRange(_u: uPlot, min: number, max: number): [number, number] {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 10];
-  return [Math.min(0, min * 1.05), Math.max(5, max * 1.05)];
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 60];
+  return [Math.min(0, min * 1.05), Math.max(60, max * 1.05)];
 }
 
 // Drag-zoom on one chart re-scales the other so the pair stays one timeline.

@@ -24,7 +24,7 @@
 // fieldToCanvasAt(), so rotation AND the field->canvas reflection are handled once,
 // correctly, for all modes. The exported fieldToCanvas/resizeField API is preserved.
 import { onSettings, getSettings, updateSettings, type Station } from './store';
-import { onValue, onConnection, decodeSwerveModuleStates, TOPICS } from './nt';
+import { onValue, onConnection, ntPublish, decodeSwerveModuleStates, TOPICS } from './nt';
 
 // Authoritative 2026 REBUILT field size (WPILib 2026-rebuilt-welded.json). The image
 // crop below was calibrated against the field PNG's own metadata (16.535) — the 6 mm
@@ -42,19 +42,28 @@ const MARGIN = 18;
 // ---- pure geometry (DOM-free; exported for the geometry self-check) -----------
 export type FieldMode = 'full' | 'driverBlue' | 'driverRed';
 export type Layout = { mode: FieldMode; s: number; ox: number; oy: number; cssW: number; cssH: number };
+// Extra CSS px kept clear on each side (on top of MARGIN) for the DOM overlays that float
+// over the canvas — the field is fit and centred in what's left, so nothing covers it.
+export type Insets = { l: number; r: number; t: number; b: number };
+const NO_INSETS: Insets = { l: 0, r: 0, t: 0, b: 0 };
 
 // Letterbox the field into a canvas of cssW x cssH, leaving a MARGIN-px inset on all
 // sides. Full mode is landscape; both driver modes are portrait (field's long axis is
 // vertical). Scale is fit to the inset area; the field is then centred in the FULL
 // canvas, so ox/oy are always >= MARGIN (the guarantee the clipping fix relies on).
-export function computeLayout(mode: FieldMode, cssW: number, cssH: number): Layout {
+export function computeLayout(mode: FieldMode, cssW: number, cssH: number, ins: Insets = NO_INSETS): Layout {
   const portrait = mode !== 'full';
   const wd = portrait ? FIELD_H_M : FIELD_W_M; // display width in meters
   const hd = portrait ? FIELD_W_M : FIELD_H_M; // display height in meters
-  const availW = Math.max(1, cssW - 2 * MARGIN);
-  const availH = Math.max(1, cssH - 2 * MARGIN);
+  const availW = Math.max(1, cssW - 2 * MARGIN - ins.l - ins.r);
+  const availH = Math.max(1, cssH - 2 * MARGIN - ins.t - ins.b);
   const s = Math.min(availW / wd, availH / hd);
-  return { mode, s, ox: (cssW - wd * s) / 2, oy: (cssH - hd * s) / 2, cssW, cssH };
+  return {
+    mode, s,
+    ox: MARGIN + ins.l + (availW - wd * s) / 2,
+    oy: MARGIN + ins.t + (availH - hd * s) / 2,
+    cssW, cssH,
+  };
 }
 
 // Meters (blue-origin: +x toward red wall, +y toward blue's left, y=0 at blue's
@@ -263,6 +272,9 @@ const STATIONS: { s: Station; cls: string }[] = [
   { s: 'B1', cls: 'stn-blue' }, { s: 'B2', cls: 'stn-blue' }, { s: 'B3', cls: 'stn-blue' },
 ];
 let pickerEl: HTMLElement | null = null;
+let stationOverlayEl: HTMLElement | null = null; // left picker column (resizeField keeps the field clear of it)
+let fieldToggleEl: HTMLElement | null = null;
+let tagsBtnEl: HTMLElement | null = null;
 let pickerButtons: HTMLButtonElement[] = [];
 let pickerNote: HTMLElement | null = null;
 let pickerLocked = false;
@@ -342,6 +354,61 @@ function onDsStatus(s: { found: boolean; dsStation: Station | null }): void {
   }
 }
 
+// ---- start-spot picker (under the station picker) ------------------------------
+// Publishes where the robot starts this match; the robot resets its pose (X, Y, heading
+// facing the neutral zone) to that spot at auto start (FieldConstants.StartSpot). Names
+// must match the Java enum exactly. Left/right = from OUR driver station. ntPublish's
+// replay cache re-sends the pick after a robot reboot. Highlighted while the FMS is
+// attached (FMSControlData 0x10) so it isn't forgotten on a real field.
+const START_SPOTS: { id: string; label: string }[] = [
+  { id: 'LEFT_TRENCH', label: 'L TRENCH' },
+  { id: 'LEFT_BUMP', label: 'L BUMP' },
+  { id: 'HUB', label: 'HUB' },
+  { id: 'RIGHT_BUMP', label: 'R BUMP' },
+  { id: 'RIGHT_TRENCH', label: 'R TRENCH' },
+];
+let startSpot = ''; // last value seen on the topic (ours, echoed back) — '' = none picked
+let fmsAttached = false;
+let startPickerEl: HTMLElement | null = null;
+let startButtons: HTMLButtonElement[] = [];
+
+function applyStartPicker(): void {
+  for (const b of startButtons) b.classList.toggle('active', b.dataset.spot === startSpot);
+  if (startPickerEl) {
+    startPickerEl.classList.toggle('fms', fmsAttached);
+    startPickerEl.classList.toggle('unset', !startSpot);
+  }
+}
+
+function buildStartPicker(overlay: HTMLElement): void {
+  const picker = document.createElement('div');
+  picker.id = 'start-picker';
+  picker.setAttribute('role', 'group');
+  picker.setAttribute('aria-label', 'Robot start spot');
+  picker.title = 'Where the robot starts — its pose is reset here when auto begins';
+  const lab = document.createElement('span');
+  lab.className = 'start-lab';
+  lab.textContent = 'START';
+  picker.appendChild(lab);
+  startButtons = [];
+  for (const { id, label } of START_SPOTS) {
+    const b = document.createElement('button');
+    b.className = 'stn stn-start';
+    b.dataset.spot = id;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      startSpot = id;
+      ntPublish(TOPICS.startSpot, 'string', id);
+      applyStartPicker();
+    });
+    picker.appendChild(b);
+    startButtons.push(b);
+  }
+  overlay.appendChild(picker);
+  startPickerEl = picker;
+  applyStartPicker();
+}
+
 // Build the station-picker overlay inside a panel container (rebuilt fresh each mount).
 function buildStationPicker(container: HTMLElement): void {
   const overlay = document.createElement('div');
@@ -382,7 +449,9 @@ function buildStationPicker(container: HTMLElement): void {
 
   overlay.appendChild(picker);
   overlay.appendChild(note);
+  buildStartPicker(overlay);
   container.appendChild(overlay);
+  stationOverlayEl = overlay;
   pickerEl = picker;
   pickerNote = note;
 }
@@ -429,7 +498,15 @@ function ensureFieldSubs(): void {
   });
   onValue(TOPICS.fmsControl, (v) => {
     fmsDsAttached = (Number(v) & 0x20) !== 0;
+    fmsAttached = (Number(v) & 0x10) !== 0;
     reconcileFollow();
+    applyStartPicker();
+  });
+  onValue(TOPICS.startSpot, (v) => {
+    if (typeof v === 'string') {
+      startSpot = v;
+      applyStartPicker();
+    }
   });
 
   // DS-ini soft-sync feed (see onDsStatus). Pull once to seed, then track pushes.
@@ -540,6 +617,7 @@ export function mountField(container: HTMLElement): void {
   toggle.textContent = driverPerspective ? 'FULL FIELD' : 'DRIVER VIEW';
   toggle.classList.toggle('active', driverPerspective);
   container.appendChild(toggle);
+  fieldToggleEl = toggle;
 
   const tagsBtn = document.createElement('button');
   tagsBtn.className = 'pane-toggle field-tags-toggle';
@@ -547,6 +625,7 @@ export function mountField(container: HTMLElement): void {
   tagsBtn.textContent = 'TAGS';
   tagsBtn.classList.toggle('active', showTags);
   container.appendChild(tagsBtn);
+  tagsBtnEl = tagsBtn;
   tagsBtn.addEventListener('click', () => {
     showTags = !showTags;
     tagsBtn.classList.toggle('active', showTags);
@@ -582,6 +661,7 @@ export function mountField(container: HTMLElement): void {
   fieldRo?.disconnect();
   fieldRo = new ResizeObserver(() => resizeField());
   fieldRo.observe(canvas.parentElement ?? canvas);
+  if (stationOverlayEl) fieldRo.observe(stationOverlayEl); // lock note / picks change its size
   window.addEventListener('resize', resizeField);
   resizeField();
   applyPicker(); // sync the freshly-built picker to current lock/active state
@@ -589,6 +669,39 @@ export function mountField(container: HTMLElement): void {
 
 let fieldRo: ResizeObserver | null = null;
 let mapRo: ResizeObserver | null = null;
+
+// Keep the field clear of every overlay: the picker column (top-left), the orientation
+// toggle + canvas vision badge (top-right) and TAGS (bottom-right). Two ways to clear them —
+// side gutters, or a top/bottom band — and whichever leaves the bigger field wins
+// (portrait driver view usually takes the gutters, landscape full field the band).
+const VISION_BADGE_W = 120; // widest canvas badge ("📡 n TAGS"), drawn at y=36..56
+const GAP = 6;
+function overlayInsets(canvasRect: DOMRect): Insets {
+  const rel = (el: HTMLElement | null) => {
+    if (!el) return { r: 0, b: 0, w: 0, h: 0 };
+    const b = el.getBoundingClientRect();
+    return { r: b.right - canvasRect.left, b: b.bottom - canvasRect.top, w: b.width, h: b.height };
+  };
+  const left = rel(stationOverlayEl);
+  const toggle = rel(fieldToggleEl);
+  const tags = rel(tagsBtnEl);
+  const sides: Insets = {
+    l: left.r ? left.r + GAP - MARGIN : 0,
+    r: Math.max(toggle.w, tags.w, VISION_BADGE_W) + 8 + GAP - MARGIN,
+    t: 0,
+    b: 0,
+  };
+  const band: Insets = {
+    l: 0,
+    r: 0,
+    t: Math.max(left.b, 56) + GAP - MARGIN,
+    b: tags.h ? tags.h + 8 + GAP - MARGIN : 0,
+  };
+  const mode = currentMode();
+  const w = Math.max(1, Math.round(canvasRect.width));
+  const h = Math.max(1, Math.round(canvasRect.height));
+  return computeLayout(mode, w, h, sides).s >= computeLayout(mode, w, h, band).s ? sides : band;
+}
 
 // Backing store = element size x devicePixelRatio; draw space stays in CSS px.
 export function resizeField(): void {
@@ -600,7 +713,7 @@ export function resizeField(): void {
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  layout = computeLayout(currentMode(), cssW, cssH);
+  layout = computeLayout(currentMode(), cssW, cssH, overlayInsets(rect));
   dirty = true;
 }
 
@@ -692,6 +805,11 @@ function drawTags(): void {
       // Hub face tag: push the number straight out past the hub along its own radial.
       labX = hub.x + (dx / r) * TAG_LABEL_HUB_R_M;
       labY = hub.y + (dy / r) * TAG_LABEL_HUB_R_M;
+    } else if (Math.abs(dx) < 0.5) {
+      // Trench tag: each trench has one tag per face, 7.5 cm apart — split the pair's
+      // labels to their own side (toward the face) so both IDs show instead of stacking.
+      labX = xM + Math.sign(dx) * 0.35;
+      labY = yM + (yM < FIELD_H_M / 2 ? 0.45 : -0.45);
     } else {
       labX = xM + (xM < FIELD_W_M / 2 ? 0.45 : -0.45);
       labY = yM + (yM < FIELD_H_M / 2 ? 0.45 : -0.45);

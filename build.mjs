@@ -66,6 +66,8 @@ cpSync(
   path.join(dist, 'dockview.css'),
 );
 cpSync(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
+// Vendored BLine Web build for the Path Planner panel (offline -- see vendor/bline-web/VENDORED.md).
+cpSync(path.join(root, 'vendor/bline-web'), path.join(dist, 'bline-web'), { recursive: true });
 // MediaPipe vision WASM runtime for the gesture navigator. Vendored into dist/ (not
 // fetched from Google's CDN) because the competition field has no internet. The
 // .task model rides along in assets/.
